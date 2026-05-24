@@ -1,0 +1,6 @@
+[package]
+name = "mathdoku"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
