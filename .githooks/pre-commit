@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+cd "$REPO_ROOT"
+
+echo "==> cargo fmt"
+cargo fmt --all
+git add -u
+
+echo "==> cargo clippy"
+cargo clippy --all-targets -- \
+  -D warnings \
+  -D clippy::all \
+  -D clippy::pedantic \
+  -D clippy::nursery \
+  -D clippy::unwrap_used \
+  -D clippy::expect_used \
+  -D clippy::panic \
+  -D clippy::todo \
+  -D clippy::unimplemented \
+  -D clippy::dbg_macro \
+  -D clippy::print_stdout \
+  -D clippy::print_stderr \
+  2>&1
+
+echo "==> cargo doc"
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps 2>&1
+
+echo "==> cargo test"
+cargo test --lib 2>&1
+
+echo "==> Pre-commit checks passed"
