@@ -1,0 +1,179 @@
+:root {
+  --paper-bg: #f4efe6;
+  --paper-ink: #26221b;
+  --paper-ink-2: #5c564a;
+  --paper-ink-3: #8b8476;
+  --paper-line: #b9ad93;
+  --paper-accent: #1a4e7a;
+
+  --flash-duration: 300ms;
+  --flash-removed-color: var(--c-warning, #c0392b);
+  --flash-added-glow: var(--c-accent, #1f77b4);
+
+  --chrome-height: 8.25rem;
+  --grid-size: min(calc(100vw - 3rem), calc(100vh - var(--chrome-height)));
+
+  font-family: "Inter", system-ui, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--paper-ink);
+  background-color: var(--paper-bg);
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--paper-bg);
+  color: var(--paper-ink);
+  min-height: 100vh;
+}
+
+h1,
+h2,
+h3 {
+  font-family: "Fraunces", Georgia, serif;
+  color: var(--paper-ink);
+}
+
+button,
+select,
+input {
+  font-family: inherit;
+  font-size: 0.95rem;
+  color: var(--paper-ink);
+  background: transparent;
+  border: 1px solid var(--paper-line);
+  border-radius: 4px;
+  padding: 0.35rem 0.75rem;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: var(--paper-accent);
+  color: var(--paper-accent);
+}
+
+button:active {
+  background-color: rgba(26, 78, 122, 0.08);
+}
+
+a {
+  color: var(--paper-accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+.app-main {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.25rem;
+  padding: 2rem 1.5rem;
+  min-height: 100vh;
+  box-sizing: border-box;
+  font-family: "Inter", system-ui, sans-serif;
+  color: var(--paper-ink-2);
+}
+
+/* The grid scales to whichever of the viewport width or height is the binding constraint. */
+.grid-wrap {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  width: 100%;
+}
+
+/* Wraps the SVG and the footer stats row below it. */
+.puzzle-wrap {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+/* Side-by-side row: cage-stats on the left, solution-count on the right. */
+.puzzle-footer {
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  padding-top: 0.35rem;
+  min-height: 1.5em;
+}
+
+.grid-svg {
+  display: block;
+  width: var(--grid-size);
+  height: auto;
+  aspect-ratio: 1 / 1;
+}
+
+.solution-count {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--paper-ink-2);
+  margin-left: auto;
+  /* Mirror the cage-stats left indent on the right side. */
+  padding-right: 2.3333%;
+}
+
+.cage-stats {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--paper-ink-2);
+  /* Indent to align with the inner grid border, not the SVG outer edge.
+     SVG viewBox is 600 units wide; MARGIN=14, so 14/600 ≈ 2.333%. */
+  padding-left: 2.3333%;
+}
+
+/* Flash overlay animations */
+@keyframes flash-remove {
+  from {
+    opacity: 1;
+    text-decoration: line-through;
+  }
+  to {
+    opacity: 0;
+    text-decoration: line-through;
+  }
+}
+
+@keyframes flash-add {
+  from {
+    text-shadow: 0 0 6px color-mix(in srgb, var(--flash-added-glow) 60%, transparent);
+  }
+  to {
+    text-shadow: none;
+  }
+}
+
+.flash-removed {
+  fill: var(--flash-removed-color);
+  text-decoration: line-through;
+  animation: flash-remove var(--flash-duration) ease-out forwards;
+  pointer-events: none;
+}
+
+.flash-added {
+  fill: var(--flash-added-glow);
+  animation: flash-add var(--flash-duration) ease-out forwards;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --flash-duration: 0ms;
+  }
+}
