@@ -5,10 +5,13 @@ use std::collections::HashSet;
 
 use rand::{Rng, RngExt};
 
+use crate::Cell;
+use crate::Error;
+use crate::cage::{Cage, Operation, Operator};
+use crate::cell::{M, N};
+use crate::latin_square::generate_latin_square;
+use crate::polyomino::Polyomino;
 use crate::puzzle::Puzzle;
-use crate::puzzle::cage::Cage;
-use crate::puzzle::types::{Error, Index, M, N};
-use crate::{Cell, Operation, Polyomino, generator::latin_square::generate_latin_square};
 
 /// Poisson distribution over cage sizes, truncated to `[1, n*n]` by
 /// rejection sampling.
@@ -38,7 +41,7 @@ impl SizeDistribution {
     /// puzzle constructor rejects `n = 0` independently, so the degenerate
     /// case never propagates to sampling.
     #[allow(clippy::cast_precision_loss)]
-    pub fn default_for(n: Index) -> Self {
+    pub fn default_for(n: usize) -> Self {
         Self {
             mean: n.max(1) as f64 / 3.0,
         }
@@ -46,7 +49,7 @@ impl SizeDistribution {
 
     /// Samples a cage size in `[1, n*n]` by rejection sampling on
     /// `Poisson(mean)`.
-    fn sample<R: Rng>(self, n: Index, rng: &mut R) -> usize {
+    fn sample<R: Rng>(self, n: usize, rng: &mut R) -> usize {
         let max = n * n;
         loop {
             let k = poisson(self.mean, rng);
@@ -74,34 +77,34 @@ fn poisson<R: Rng>(mean: f64, rng: &mut R) -> usize {
 
 /// Default policy mapping a cage's solved-grid values to an [`Operation`].
 ///
-/// - 1 cell: [`Operation::Given`].
-/// - 2 cells: [`Operation::Divide`] when divisible, otherwise [`Operation::Subtract`].
-/// - 3+ cells: [`Operation::Multiply`] when the product fits in `n²`, otherwise [`Operation::Add`].
+/// - 1 cell: [`Operator::Given`].
+/// - 2 cells: [`Operator::Divide`] when divisible, otherwise [`Operator::Subtract`].
+/// - 3+ cells: [`Operator::Multiply`] when the product fits in `n²`, otherwise [`Operator::Add`].
 ///
 /// # Errors
 /// Returns [`Error::EmptyOpPolicyValues`] if `values` is empty. A cage always
 /// covers at least one cell, so callers that obtain `values` from a cage's
 /// cells will never trigger this.
-pub fn default_op_policy(values: &[N], n: Index) -> Result<Operation, Error> {
-    use Operation::{Add, Divide, Given, Multiply, Subtract};
+pub fn default_op_policy(values: &[N], n: usize) -> Result<Operation, Error> {
+    let op = |operator, target| Ok(Operation::new(operator, target));
     match values.len() {
         0 => Err(Error::EmptyOpPolicyValues),
-        1 => Ok(Given(M::from(values[0]))),
+        1 => op(Operator::Given, M::from(values[0])),
         2 => {
             let (hi, lo) = (values[0].max(values[1]), values[0].min(values[1]));
             if hi.is_multiple_of(lo) {
-                Ok(Divide(M::from(hi / lo)))
+                op(Operator::Divide, M::from(hi / lo))
             } else {
-                Ok(Subtract(M::from(hi - lo)))
+                op(Operator::Subtract, M::from(hi - lo))
             }
         }
         _ => {
             let prod: u64 = values.iter().map(|&v| u64::from(v)).product();
             let area = u64::from(M::try_from(n * n).unwrap_or(M::MAX));
             if prod <= area {
-                Ok(Multiply(M::try_from(prod).unwrap_or(M::MAX)))
+                op(Operator::Multiply, M::try_from(prod).unwrap_or(M::MAX))
             } else {
-                Ok(Add(values.iter().map(|&v| M::from(v)).sum()))
+                op(Operator::Add, values.iter().map(|&v| M::from(v)).sum())
             }
         }
     }
@@ -112,7 +115,7 @@ pub fn default_op_policy(values: &[N], n: Index) -> Result<Operation, Error> {
 ///
 /// # Errors
 /// Returns `Error` if `n` is not in `1..=9`.
-pub fn generate<R: Rng>(n: Index, rng: &mut R) -> Result<Puzzle, Error> {
+pub fn generate<R: Rng>(n: usize, rng: &mut R) -> Result<Puzzle, Error> {
     generate_with(n, rng, default_op_policy, SizeDistribution::default_for(n))
 }
 
@@ -133,29 +136,27 @@ pub fn generate<R: Rng>(n: Index, rng: &mut R) -> Result<Puzzle, Error> {
 /// exists), which is structurally unreachable when the tiling is valid.
 #[allow(clippy::cast_possible_truncation)]
 pub fn generate_with<R: Rng, F>(
-    n: Index,
+    n: usize,
     rng: &mut R,
     op: F,
     sizes: SizeDistribution,
 ) -> Result<Puzzle, Error>
 where
-    F: Fn(&[N], Index) -> Result<Operation, Error>,
+    F: Fn(&[N], usize) -> Result<Operation, Error>,
 {
     let mut puzzle = Puzzle::new(n)?;
     let latin_square = generate_latin_square(n, rng);
     let tiling = greedy(n, sizes, rng)?;
-    let n_max = n as N;
 
     for polyomino in tiling {
         let values: Vec<N> = polyomino
             .cells()
+            .into_iter()
             .map(|cell| latin_square[cell.row][cell.column])
             .collect();
         let operation = op(&values, n)?;
-        let cage = Cage::new(n_max, polyomino, operation);
-        puzzle = puzzle
-            .insert_cage(cage)?
-            .unwrap_or_else(|| unreachable!("disjoint tiling cannot produce a contradiction"));
+        let cage = Cage::new(polyomino, operation);
+        puzzle = puzzle.insert_cage(cage);
     }
     Ok(puzzle)
 }
@@ -166,6 +167,10 @@ where
 /// edge-connected uncovered cells until the target size sampled from
 /// `dist` is reached or no candidates remain, then starts a new
 /// polyomino.
+///
+/// # Errors
+/// Returns [`Error::DisconnectedPolyomino`] or [`Error::EmptyPolyomino`] if
+/// the grown cell set fails validation (structurally unreachable in practice).
 pub fn greedy<R: Rng>(
     n: usize,
     dist: SizeDistribution,
@@ -228,23 +233,29 @@ mod tests {
     use rand::SeedableRng;
 
     use super::*;
-    use crate::puzzle::cover::Cover;
+
+    fn op(operator: Operator, target: M) -> Operation {
+        Operation::new(operator, target)
+    }
 
     #[test]
     fn default_op_policy_one_cell_is_given() {
-        assert_eq!(default_op_policy(&[3], 4).unwrap(), Operation::Given(3));
+        assert_eq!(default_op_policy(&[3], 4).unwrap(), op(Operator::Given, 3));
     }
 
     #[test]
     fn default_op_policy_two_cells_divisible_is_divide() {
-        assert_eq!(default_op_policy(&[2, 6], 6).unwrap(), Operation::Divide(3));
+        assert_eq!(
+            default_op_policy(&[2, 6], 6).unwrap(),
+            op(Operator::Divide, 3)
+        );
     }
 
     #[test]
     fn default_op_policy_two_cells_not_divisible_is_subtract() {
         assert_eq!(
             default_op_policy(&[2, 5], 6).unwrap(),
-            Operation::Subtract(3)
+            op(Operator::Subtract, 3)
         );
     }
 
@@ -253,7 +264,7 @@ mod tests {
         // n²=16; product 1·2·3 = 6 ≤ 16
         assert_eq!(
             default_op_policy(&[1, 2, 3], 4).unwrap(),
-            Operation::Multiply(6)
+            op(Operator::Multiply, 6)
         );
     }
 
@@ -262,7 +273,7 @@ mod tests {
         // n²=16; product 3·4·4 = 48 > 16
         assert_eq!(
             default_op_policy(&[3, 4, 4], 4).unwrap(),
-            Operation::Add(11)
+            op(Operator::Add, 11)
         );
     }
 
@@ -272,7 +283,7 @@ mod tests {
         // sum = 9*9 = 81
         assert_eq!(
             default_op_policy(&[9, 9, 9, 9, 9, 9, 9, 9, 9], 9).unwrap(),
-            Operation::Add(81)
+            op(Operator::Add, 81)
         );
     }
 
@@ -350,7 +361,7 @@ mod tests {
             let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(seed);
             let n = if seed % 3 == 0 { 4 } else { 3 };
             let tiling = greedy(n, dist, &mut rng).unwrap();
-            let covered: HashSet<Cell> = tiling.iter().flat_map(Cover::cells).collect();
+            let covered: HashSet<Cell> = tiling.iter().flat_map(Polyomino::cells).collect();
             assert_eq!(covered.len(), n * n);
         }
     }

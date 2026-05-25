@@ -1,26 +1,25 @@
-use crate::puzzle::cage::Tuple;
-use crate::puzzle::types::{Error, M, N};
+use crate::Error;
+use crate::cell::{M, N};
 
-/// Returns an iterator over all non-decreasing `k`-tuples with values in
-/// `1..=n` that sum to `s`.
+/// An ordered assignment of values to the cells of a cage, one value per cell.
+pub type Tuple = Vec<N>;
+
+/// Returns an iterator over all non-decreasing `k`-tuples with values in `1..=n` that sum to `s`.
 pub fn addition_multisets(n: N, k: usize, s: N) -> impl Iterator<Item = Tuple> {
     simplex_multisets(n, k, |acc, i| acc + u64::from(i), u64::from(s))
 }
 
-/// Returns all 2-element tuples `[i, j]` with `j - i == d` and `1 <= i < j <=
-/// max`.
+/// Returns an iterator over all 2-element tuples `[i, j]` with `j - i == d` and `1 <= i < j <= max`.
 pub fn subtraction_multisets(max: N, d: N) -> impl Iterator<Item = Tuple> {
     (1..=max.saturating_sub(d)).map(move |i| vec![i, i + d])
 }
 
-/// Returns an iterator over all non-decreasing `k`-tuples with values in
-/// `1..=n` whose product is `s`.
+/// Returns an iterator over all non-decreasing `k`-tuples with values in `1..=n` whose product is `s`.
 pub fn multiplication_multisets(n: N, k: usize, s: M) -> impl Iterator<Item = Tuple> {
     simplex_multisets(n, k, |acc, i| acc * u64::from(i), u64::from(s))
 }
 
-/// Returns all 2-element tuples `[i, j]` with `j / i == q` and `1 <= i < j <=
-/// max`.
+/// Returns an iterator over all 2-element tuples `[i, j]` with `j / i == q` and `1 <= i < j <= max`.
 pub fn division_multisets(max: N, q: N) -> impl Iterator<Item = Tuple> {
     (1..=max / q).map(move |i| vec![i, i * q])
 }
@@ -30,51 +29,52 @@ pub fn division_multisets(max: N, q: N) -> impl Iterator<Item = Tuple> {
 ///
 /// `f` folds a `u64` accumulator over each `N` element. This matters for
 /// multiplication: the worst case is a 9-cell cage on a 9×9 grid whose product
-/// could reach 9×9! ≈ 3.3×10⁶, which overflows `M` (`u16`) but fits
-/// comfortably in `u64`. Because the target `s` is also widened to `u64` before
-/// the comparison, any partial product that exceeds `M::MAX` will simply fail
-/// the `v <= s` pruning check and be discarded — no special-casing needed.
-/// Complete tuples are yielded only when their value equals `s`.
-#[allow(clippy::many_single_char_names)]
+/// could reach 9⁹ ≈ 3.9×10⁸, which overflows `M` (`u16`) but fits in `u64`.
+/// Because the target `s` is also widened to `u64`, any partial product that
+/// exceeds `M::MAX` simply fails the `v <= s` pruning check — no special-casing
+/// needed. Complete tuples are yielded only when their fold value equals `s`.
 fn simplex_multisets(
     n: N,
     tuple_size: usize,
     f: impl Fn(u64, N) -> u64 + Copy + 'static,
     s: u64,
 ) -> Box<dyn Iterator<Item = Tuple>> {
-    fn recurse(
-        n: N,
-        tuple_size: usize,
-        k: usize,
-        f: impl Fn(u64, N) -> u64 + Copy + 'static,
-        s: u64,
-    ) -> Box<dyn Iterator<Item = Tuple>> {
-        if k == 0 {
-            return Box::new(std::iter::once(vec![]));
-        }
-        Box::new(recurse(n, tuple_size, k - 1, f, s).flat_map(move |t| {
-            let last = t.last().copied().unwrap_or(1);
-            (last..=n)
-                .map(move |i| {
-                    let mut t = t.clone();
-                    t.push(i);
-                    t
-                })
-                .filter(move |t| {
-                    sequence_operation(f, t).is_ok_and(|v| {
-                        if t.len() == tuple_size {
-                            v == s
-                        } else {
-                            // Prune partials whose accumulated value already exceeds s; extending
-                            // them can only increase it.
-                            v <= s
-                        }
-                    })
-                })
-                .collect::<Vec<_>>()
-        }))
+    simplex_multisets_inner(n, tuple_size, tuple_size, f, s)
+}
+
+/// Recursive worker for [`simplex_multisets`].
+///
+/// Builds tuples of length `total_size` one element at a time. `remaining`
+/// counts how many positions are still to be filled. Each recursive call
+/// extends prefixes of length `total_size - remaining` by one element, pruning
+/// branches whose accumulated value already exceeds `s`.
+#[allow(clippy::many_single_char_names)]
+fn simplex_multisets_inner(
+    n: N,
+    total_size: usize,
+    remaining: usize,
+    f: impl Fn(u64, N) -> u64 + Copy + 'static,
+    s: u64,
+) -> Box<dyn Iterator<Item = Tuple>> {
+    if remaining == 0 {
+        return Box::new(std::iter::once(vec![]));
     }
-    recurse(n, tuple_size, tuple_size, f, s)
+    Box::new(
+        simplex_multisets_inner(n, total_size, remaining - 1, f, s).flat_map(move |t| {
+            let last = t.last().copied().unwrap_or(1);
+            (last..=n).filter_map(move |i| {
+                let mut t = t.clone();
+                t.push(i);
+                sequence_operation(f, &t).ok().and_then(|v| {
+                    if t.len() == total_size {
+                        (v == s).then_some(t)
+                    } else {
+                        (v <= s).then_some(t)
+                    }
+                })
+            })
+        }),
+    )
 }
 
 /// Reduces `t` by left-folding `f` over its elements, starting from the first

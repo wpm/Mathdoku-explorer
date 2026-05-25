@@ -1,22 +1,21 @@
 //! Mathdoku puzzle generator and solver.
 //!
-//! [`Puzzle`] is the entry point for everything the crate does:
-//! - Build an empty board with [`Puzzle::new`] and add constraints with [`Puzzle::insert_cage`], or
-//!   bulk-construct with [`Puzzle::with_cages`].
-//! - Enumerate solutions with [`Puzzle::solutions`] (or [`Puzzle::solution_count`]).
-//! - Generate a random puzzle with [`Puzzle::generate`] (or [`Puzzle::generate_with`] for a custom
-//!   operation policy and cage-size distribution).
+//! ## Core types
 //!
-//! Internally, the solver is organized around standard constraint-satisfaction
-//! concepts: a `Variable` trait over grid cells, a `Store` of intrinsic domains,
-//! a derived viable-tuple `TuplesCache`, `Constraint`s ([`Cage`] and `AllDifferent`)
-//! propagated to a fixed point, and a depth-first search.
+//! | Type | Role |
+//! |------|------|
+//! | [`Cell`] | A grid position identified by `(row, column)`. |
+//! | [`Values`] | A bitmap set of candidate values `1..=9` for a cell. |
+//! | [`Cage`] | A polyomino paired with an [`Operation`]. |
+//! | [`puzzle::Puzzle`] | An `n×n` grid with a set of cages. |
 //!
-//! ## Threading
+//! ## Entry points
 //!
-//! [`Puzzle`] is [`Send`] and [`Sync`]. Interior mutability of the memoization
-//! cache is handled with [`std::sync::Mutex`], so puzzles can be shared across
-//! threads freely.
+//! - **Generate** a random puzzle with [`generate::generate`] or
+//!   [`generate::generate_with`] (custom operation policy / cage-size distribution).
+//! - **Construct** a puzzle programmatically with [`puzzle::Puzzle::new`] and
+//!   [`puzzle::Puzzle::insert_cage`].
+//! - **Inspect** cell domains with [`puzzle::Puzzle::get_cell_values`].
 
 #![allow(
     clippy::must_use_candidate,
@@ -25,17 +24,21 @@
     clippy::missing_panics_doc
 )]
 
-mod generator;
-
-pub mod cs;
+mod arithmetic;
+mod cage;
+mod cell;
+mod csp;
+mod error;
+pub mod generate;
+mod latin_square;
+mod polyomino;
 pub mod puzzle;
+mod puzzle_csp;
+mod regin;
 #[cfg(test)]
 mod test_utils;
 
-pub use generator::generate::{SizeDistribution, generate};
-pub use puzzle::Puzzle;
-pub use puzzle::cage::{Cage, Tuple};
-pub use puzzle::operation::{CageOption, Operation, Operator};
-pub use puzzle::polyomino::Polyomino;
-pub use puzzle::slot::Slot;
-pub use puzzle::types::{Cell, Domain, Error};
+pub use cage::{Cage, Operation, Operator};
+pub use cell::{Cell, M, N, Values};
+pub use error::Error;
+pub use polyomino::Polyomino;

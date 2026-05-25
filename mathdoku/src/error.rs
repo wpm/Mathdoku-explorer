@@ -1,0 +1,177 @@
+//! The [`Error`] type returned by fallible puzzle and polyomino operations.
+//!
+//! Every variant carries enough context to produce a human-readable message via
+//! [`fmt::Display`], and the enum implements [`std::error::Error`] so it
+//! composes with standard error-handling idioms.
+
+use std::fmt;
+
+use crate::cage::{Cage, Operation, Operator};
+use crate::cell::Cell;
+use crate::polyomino::Polyomino;
+
+/// Errors that can occur during puzzle construction or solving.
+#[derive(Debug)]
+pub enum Error {
+    /// A puzzle was constructed with a size less than 1 or greater than 9.
+    InvalidGridSize(usize),
+    /// A referenced [`Cell`] is not present in the grid.
+    InvalidCell(Cell),
+    /// A new [`Cage`] conflicts with an existing cage.
+    CageConflict(Cage),
+    /// Two polyominos in a puzzle constructor share the same set of cells.
+    DuplicateSlotPolyomino(Polyomino),
+    /// A new polyomino conflicts with an existing one in the puzzle.
+    RegionConflict(Polyomino),
+    /// A polyomino cannot support the requested [`Operation`]: either the
+    /// operator is invalid for the cell count, or the target is unreachable.
+    InfeasibleOperation(Polyomino, Operation),
+    /// The arity of a tuple does not match the [`Operator`]'s requirements.
+    InvalidOperationArity(Operator, usize),
+    /// A [`Cell`] referenced by an operation is not covered by any polyomino.
+    CellNotCovered(Cell),
+    /// Removing a [`Cell`] from a polyomino would disconnect the remaining cells.
+    WouldDisconnect(Cell),
+    /// A [`Cell`] is not edge-adjacent to the polyomino it was applied to.
+    TargetNotAdjacent,
+    /// A [`Cell`] is already present in the polyomino.
+    CellAlreadyInPolyomino(Cell),
+    /// Removing a [`Cell`] would leave the polyomino empty.
+    RemovalWouldEmptyPolyomino(Cell),
+    /// A polyomino was constructed from an empty cell slice.
+    EmptyPolyomino,
+    /// A polyomino was constructed from cells that are not edge-connected.
+    DisconnectedPolyomino,
+    /// A grid index is out of range for the given grid size. Carries `(index, n)`.
+    IndexOutOfRange(usize, usize),
+    /// An operation policy received an empty value slice.
+    EmptyOpPolicyValues,
+    /// A fold operation was applied to an empty tuple.
+    EmptyTuple,
+}
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidGridSize(n) => write!(f, "invalid grid size {n}"),
+            Self::InvalidCell(c) => {
+                write!(f, "cell ({}, {}) is outside the grid", c.row, c.column)
+            }
+            Self::CageConflict(new) => {
+                write!(
+                    f,
+                    "cage {new:?} conflicts with an existing cage in the puzzle"
+                )
+            }
+            Self::DuplicateSlotPolyomino(p) => {
+                write!(f, "duplicate polyomino {p:?} across puzzle slots")
+            }
+            Self::RegionConflict(p) => write!(
+                f,
+                "region {p:?} conflicts with an existing slot in the puzzle"
+            ),
+            Self::InfeasibleOperation(p, op) => {
+                write!(f, "operation {op:?} is infeasible for polyomino {p:?}")
+            }
+            Self::CellNotCovered(c) => write!(
+                f,
+                "cell ({}, {}) is not covered by any polyomino",
+                c.row, c.column
+            ),
+            Self::WouldDisconnect(c) => write!(
+                f,
+                "removing cell ({}, {}) would disconnect the polyomino",
+                c.row, c.column
+            ),
+            Self::TargetNotAdjacent => {
+                write!(f, "target cell is not edge-adjacent to the polyomino")
+            }
+            Self::CellAlreadyInPolyomino(c) => write!(
+                f,
+                "cell ({}, {}) is already in the polyomino",
+                c.row, c.column
+            ),
+            Self::RemovalWouldEmptyPolyomino(c) => write!(
+                f,
+                "removing cell ({}, {}) would leave an empty polyomino",
+                c.row, c.column
+            ),
+            Self::EmptyPolyomino => write!(
+                f,
+                "polyomino cannot be constructed from an empty cell slice"
+            ),
+            Self::DisconnectedPolyomino => write!(f, "polyomino cells are not edge-connected"),
+            Self::IndexOutOfRange(index, n) => {
+                write!(f, "index {index} is out of range for grid of size {n}")
+            }
+            Self::EmptyOpPolicyValues => {
+                write!(f, "operation policy received an empty value slice")
+            }
+            Self::EmptyTuple => {
+                write!(f, "tuple operation cannot be applied to an empty tuple")
+            }
+            Self::InvalidOperationArity(operator, arity) => write!(
+                f,
+                "{operator} cannot be applied to a tuple of arity {arity}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for Error {}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use crate::{Cell, Error};
+
+    #[test]
+    fn error_display_covers_all_variants() {
+        let c = Cell::new(1, 2);
+        assert_eq!(Error::InvalidGridSize(0).to_string(), "invalid grid size 0");
+        assert_eq!(
+            Error::InvalidCell(c).to_string(),
+            "cell (1, 2) is outside the grid"
+        );
+        assert_eq!(
+            Error::CellNotCovered(c).to_string(),
+            "cell (1, 2) is not covered by any polyomino"
+        );
+        assert_eq!(
+            Error::WouldDisconnect(c).to_string(),
+            "removing cell (1, 2) would disconnect the polyomino"
+        );
+        assert_eq!(
+            Error::TargetNotAdjacent.to_string(),
+            "target cell is not edge-adjacent to the polyomino"
+        );
+        assert_eq!(
+            Error::CellAlreadyInPolyomino(c).to_string(),
+            "cell (1, 2) is already in the polyomino"
+        );
+        assert_eq!(
+            Error::RemovalWouldEmptyPolyomino(c).to_string(),
+            "removing cell (1, 2) would leave an empty polyomino"
+        );
+        assert_eq!(
+            Error::EmptyPolyomino.to_string(),
+            "polyomino cannot be constructed from an empty cell slice"
+        );
+        assert_eq!(
+            Error::DisconnectedPolyomino.to_string(),
+            "polyomino cells are not edge-connected"
+        );
+        assert_eq!(
+            Error::IndexOutOfRange(3, 2).to_string(),
+            "index 3 is out of range for grid of size 2"
+        );
+        assert_eq!(
+            Error::EmptyOpPolicyValues.to_string(),
+            "operation policy received an empty value slice"
+        );
+        assert_eq!(
+            Error::EmptyTuple.to_string(),
+            "tuple operation cannot be applied to an empty tuple"
+        );
+    }
+}
