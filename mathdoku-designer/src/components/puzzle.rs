@@ -26,7 +26,7 @@
     clippy::cast_possible_truncation
 )]
 
-use mathdoku::puzzle::Puzzle as KenkenPuzzle;
+use mathdoku::Puzzle as KenkenPuzzle;
 use mathdoku_designer_shared::{Mode, ViewState};
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;

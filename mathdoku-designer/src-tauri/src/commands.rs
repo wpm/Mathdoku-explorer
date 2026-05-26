@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use mathdoku::puzzle::Puzzle;
+use mathdoku::Puzzle;
 use mathdoku::{Cell, Operation, Operator, Polyomino};
 use mathdoku_designer_shared::{DocState, ViewState};
 use tauri::{AppHandle, Manager, Runtime, State};
