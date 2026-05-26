@@ -156,16 +156,19 @@ impl Puzzle {
         Ok(self.values[self.index(cell)?])
     }
 
-    /// Propagates all constraints to a fixpoint using generalized arc consistency.
-    ///
-    /// Runs Régin's GAC on every row and column (all-different) and every cage,
-    /// re-propagating any constraint adjacent to a cell whose domain shrinks, until
-    /// no further pruning is possible.
+    /// Returns a new puzzle with `cell`'s domain narrowed to the singleton `{n}`.
     ///
     /// # Errors
-    /// Returns an error if any cell is out of bounds during propagation.
-    fn fixpoint(&self) -> Result<Self, Error> {
-        crate::puzzle_csp::puzzle_fixpoint(self)
+    /// Returns [`Error::InvalidCell`] if `cell` is outside the grid.
+    pub(crate) fn set_cell_value(&self, cell: Cell, n: N) -> Result<Self, Error> {
+        let i = self.index(cell)?;
+        let mut values = self.values.clone();
+        values[i] = Values::new(&[n]);
+        Ok(Self {
+            n: self.n,
+            values,
+            cages: self.cages.clone(),
+        })
     }
 
     /// Returns a new puzzle with `cell`'s domain replaced by `values`.
@@ -183,27 +186,24 @@ impl Puzzle {
         })
     }
 
-    /// Returns a new puzzle with `cell`'s domain narrowed to the singleton `{n}`.
-    ///
-    /// # Errors
-    /// Returns [`Error::InvalidCell`] if `cell` is outside the grid.
-    pub(crate) fn set_cell_value(&self, cell: Cell, n: N) -> Result<Self, Error> {
-        let i = self.index(cell)?;
-        let mut values = self.values.clone();
-        values[i] = Values::new(&[n]);
-        Ok(Self {
-            n: self.n,
-            values,
-            cages: self.cages.clone(),
-        })
-    }
-
     const fn index(&self, cell: Cell) -> Result<usize, Error> {
         if cell.row < self.n && cell.column < self.n {
             Ok(cell.row * self.n + cell.column)
         } else {
             Err(Error::InvalidCell(cell))
         }
+    }
+
+    /// Propagates all constraints to a fixpoint using generalized arc consistency.
+    ///
+    /// Runs Régin's GAC on every row and column (all-different) and every cage,
+    /// re-propagating any constraint adjacent to a cell whose domain shrinks, until
+    /// no further pruning is possible.
+    ///
+    /// # Errors
+    /// Returns an error if any cell is out of bounds during propagation.
+    fn fixpoint(&self) -> Result<Self, Error> {
+        crate::puzzle_csp::puzzle_fixpoint(self)
     }
 }
 
