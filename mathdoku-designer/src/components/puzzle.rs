@@ -99,7 +99,7 @@ impl PuzzleRef {
             .into_iter()
             .map(|cell| {
                 puzzle
-                    .get_cell_values(cell)
+                    .cell_values(cell)
                     .map(|v| v.values().into_iter().collect())
                     .unwrap_or_default()
             })
@@ -294,7 +294,7 @@ pub fn Puzzle(
     for (r, row) in domains.iter_mut().enumerate() {
         for (c, cell_domain) in row.iter_mut().enumerate() {
             let cell_ref = MathdokuCell::new(r, c);
-            if let Ok(vals) = puzzle.get_cell_values(cell_ref) {
+            if let Ok(vals) = puzzle.cell_values(cell_ref) {
                 *cell_domain = vals.values();
             }
         }

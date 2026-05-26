@@ -37,7 +37,7 @@ impl PuzzleCell {
     /// # Errors
     /// Returns [`Error::InvalidCell`] if `cell` is outside the grid.
     fn new(cell: Cell, puzzle: &Puzzle) -> Result<Self, Error> {
-        let _ = puzzle.get_cell_values(cell)?;
+        let _ = puzzle.cell_values(cell)?;
         Ok(Self {
             cell,
             n: puzzle.n(),
@@ -125,7 +125,7 @@ impl Constraint<Puzzle, PuzzleCell, Error> for AllDifferent {
         let cells = &self.0;
         let old_domains: Vec<Values> = cells
             .iter()
-            .map(|&c| state.get_cell_values(c))
+            .map(|&c| state.cell_values(c))
             .collect::<Result<_, _>>()?;
         let new_domains = regin_gac(&old_domains);
         apply_domains(state, cells, &old_domains, &new_domains)
@@ -155,7 +155,7 @@ impl Constraint<Puzzle, PuzzleCell, Error> for Cage {
         let cells = self.cells();
         let old_domains: Vec<Values> = cells
             .iter()
-            .map(|&c| state.get_cell_values(c))
+            .map(|&c| state.cell_values(c))
             .collect::<Result<_, _>>()?;
 
         // A value survives at position i iff some valid tuple uses it there
@@ -204,7 +204,7 @@ impl Solutions {
         for r in 0..n {
             for c in 0..n {
                 let cell = Cell::new(r, c);
-                if let Ok(domain) = puzzle.get_cell_values(cell)
+                if let Ok(domain) = puzzle.cell_values(cell)
                     && domain.len() >= 2
                     && best.is_none_or(|(_, d)| domain.len() < d.len())
                 {
@@ -232,7 +232,7 @@ impl Iterator for Solutions {
             // Check for failure: any empty domain means this branch is dead.
             let failed = (0..n)
                 .flat_map(|r| (0..n).map(move |c| Cell::new(r, c)))
-                .any(|cell| puzzle.get_cell_values(cell).is_ok_and(Values::is_empty));
+                .any(|cell| puzzle.cell_values(cell).is_ok_and(Values::is_empty));
             if failed {
                 continue;
             }
@@ -240,7 +240,7 @@ impl Iterator for Solutions {
             // Check for success: all domains are singletons.
             let solved = (0..n)
                 .flat_map(|r| (0..n).map(move |c| Cell::new(r, c)))
-                .all(|cell| puzzle.get_cell_values(cell).is_ok_and(Values::is_singleton));
+                .all(|cell| puzzle.cell_values(cell).is_ok_and(Values::is_singleton));
             if solved {
                 return Some(Ok(puzzle));
             }
@@ -320,15 +320,15 @@ mod tests {
             .propagate(&row0_forced_puzzle())
             .unwrap();
         assert_eq!(
-            new_p.get_cell_values(Cell::new(0, 0)).unwrap(),
+            new_p.cell_values(Cell::new(0, 0)).unwrap(),
             Values::new(&[1])
         );
         assert_eq!(
-            new_p.get_cell_values(Cell::new(0, 1)).unwrap(),
+            new_p.cell_values(Cell::new(0, 1)).unwrap(),
             Values::new(&[2])
         );
         assert_eq!(
-            new_p.get_cell_values(Cell::new(0, 2)).unwrap(),
+            new_p.cell_values(Cell::new(0, 2)).unwrap(),
             Values::new(&[3])
         );
         let cells = changed_cells(&changed);
@@ -341,8 +341,8 @@ mod tests {
     fn propagate_infeasible_empties_domains() {
         let p = puzzle_with_domains(&[(&(0, 0), &[1]), (&(1, 0), &[1])]);
         let (new_p, changed) = AllDifferent::column(2, 0).propagate(&p).unwrap();
-        assert!(new_p.get_cell_values(Cell::new(0, 0)).unwrap().is_empty());
-        assert!(new_p.get_cell_values(Cell::new(1, 0)).unwrap().is_empty());
+        assert!(new_p.cell_values(Cell::new(0, 0)).unwrap().is_empty());
+        assert!(new_p.cell_values(Cell::new(1, 0)).unwrap().is_empty());
         assert_eq!(changed.len(), 2);
     }
 
@@ -360,11 +360,11 @@ mod tests {
         let p = puzzle_with_domains(&[(&(0, 1), &[1]), (&(1, 1), &[1, 2]), (&(2, 1), &[2, 3])]);
         let (new_p, _) = AllDifferent::column(3, 1).propagate(&p).unwrap();
         assert_eq!(
-            new_p.get_cell_values(Cell::new(1, 1)).unwrap(),
+            new_p.cell_values(Cell::new(1, 1)).unwrap(),
             Values::new(&[2])
         );
         assert_eq!(
-            new_p.get_cell_values(Cell::new(2, 1)).unwrap(),
+            new_p.cell_values(Cell::new(2, 1)).unwrap(),
             Values::new(&[3])
         );
     }
@@ -393,7 +393,7 @@ mod tests {
         let c = cage(&[(0, 0)], crate::cage::Operator::Given, 3);
         let (new_p, changed) = c.propagate(&p).unwrap();
         assert_eq!(
-            new_p.get_cell_values(Cell::new(0, 0)).unwrap(),
+            new_p.cell_values(Cell::new(0, 0)).unwrap(),
             Values::new(&[3])
         );
         assert_eq!(changed_cells(&changed), vec![Cell::new(0, 0)]);
@@ -407,11 +407,11 @@ mod tests {
         let c = cage(&[(0, 0), (0, 1)], crate::cage::Operator::Add, 3);
         let (new_p, _) = c.propagate(&p).unwrap();
         assert_eq!(
-            new_p.get_cell_values(Cell::new(0, 0)).unwrap(),
+            new_p.cell_values(Cell::new(0, 0)).unwrap(),
             Values::new(&[1, 2])
         );
         assert_eq!(
-            new_p.get_cell_values(Cell::new(0, 1)).unwrap(),
+            new_p.cell_values(Cell::new(0, 1)).unwrap(),
             Values::new(&[1, 2])
         );
     }
@@ -423,8 +423,8 @@ mod tests {
         let p = puzzle_with_domains(&[(&(0, 0), &[4]), (&(0, 1), &[4])]);
         let c = cage(&[(0, 0), (0, 1)], crate::cage::Operator::Add, 3);
         let (new_p, changed) = c.propagate(&p).unwrap();
-        assert!(new_p.get_cell_values(Cell::new(0, 0)).unwrap().is_empty());
-        assert!(new_p.get_cell_values(Cell::new(0, 1)).unwrap().is_empty());
+        assert!(new_p.cell_values(Cell::new(0, 0)).unwrap().is_empty());
+        assert!(new_p.cell_values(Cell::new(0, 1)).unwrap().is_empty());
         assert_eq!(changed.len(), 2);
     }
 
@@ -441,11 +441,11 @@ mod tests {
         let c = cage(&[(0, 0), (0, 1)], crate::cage::Operator::Add, 5);
         let (new_p, _) = c.propagate(&p).unwrap();
         assert_eq!(
-            new_p.get_cell_values(Cell::new(0, 0)).unwrap(),
+            new_p.cell_values(Cell::new(0, 0)).unwrap(),
             Values::new(&[3, 4])
         );
         assert_eq!(
-            new_p.get_cell_values(Cell::new(0, 1)).unwrap(),
+            new_p.cell_values(Cell::new(0, 1)).unwrap(),
             Values::new(&[1, 2])
         );
     }
