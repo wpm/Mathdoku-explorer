@@ -82,3 +82,193 @@ where
     }
     Ok(state)
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    //! Uses a minimal concrete CSP: state is `Vec<Vec<u32>>` (one domain per variable),
+    //! variables are structs carrying an id and their constraint list, errors are `String`.
+    //!
+    //! Two constraint types:
+    //! - `Equal(a, b)` — variables `a` and `b` must share the same value.
+    //! - `Sum(vars, target)` — the named variables must sum to `target`.
+
+    use super::{Constraint, Variable, generalized_arc_consistency};
+
+    type State = Vec<Vec<u32>>;
+
+    #[derive(Clone)]
+    struct Var {
+        #[allow(dead_code)]
+        id: usize,
+        constraints: Vec<Csp>,
+    }
+
+    impl Variable<Csp> for Var {
+        fn constraints(&self) -> Vec<Csp> {
+            self.constraints.clone()
+        }
+    }
+
+    #[derive(Clone)]
+    enum Csp {
+        Equal(usize, usize),
+        Sum(Vec<usize>, u32),
+    }
+
+    impl Constraint<State, Var, String> for Csp {
+        fn propagate(&self, state: &State) -> Result<(State, Vec<Var>), String> {
+            match self {
+                Self::Equal(a, b) => Ok(equal_propagate(*a, *b, state)),
+                Self::Sum(vars, target) => Ok(sum_propagate(vars, *target, state)),
+            }
+        }
+    }
+
+    fn equal_propagate(a: usize, b: usize, state: &State) -> (State, Vec<Var>) {
+        let intersection: Vec<u32> = state[a]
+            .iter()
+            .filter(|v| state[b].contains(v))
+            .copied()
+            .collect();
+        let mut new_state = state.clone();
+        let mut changed = vec![];
+        if intersection != state[a] {
+            new_state[a] = intersection.clone();
+            changed.push(Var {
+                id: a,
+                constraints: vec![Csp::Equal(a, b)],
+            });
+        }
+        if intersection != state[b] {
+            new_state[b] = intersection;
+            changed.push(Var {
+                id: b,
+                constraints: vec![Csp::Equal(a, b)],
+            });
+        }
+        (new_state, changed)
+    }
+
+    fn extend_sum(
+        pos: usize,
+        domains: &[&Vec<u32>],
+        current: &mut Vec<u32>,
+        target: u32,
+        survivors: &mut Vec<Vec<u32>>,
+    ) {
+        if pos == domains.len() {
+            if current.iter().sum::<u32>() == target {
+                for (i, &v) in current.iter().enumerate() {
+                    if !survivors[i].contains(&v) {
+                        survivors[i].push(v);
+                    }
+                }
+            }
+            return;
+        }
+        for &v in domains[pos] {
+            current.push(v);
+            extend_sum(pos + 1, domains, current, target, survivors);
+            let _ = current.pop();
+        }
+    }
+
+    fn sum_propagate(vars: &[usize], target: u32, state: &State) -> (State, Vec<Var>) {
+        let domains: Vec<&Vec<u32>> = vars.iter().map(|&i| &state[i]).collect();
+        let mut survivors: Vec<Vec<u32>> = vars.iter().map(|_| vec![]).collect();
+        extend_sum(0, &domains, &mut vec![], target, &mut survivors);
+        let mut new_state = state.clone();
+        let mut changed = vec![];
+        for (i, &var) in vars.iter().enumerate() {
+            if survivors[i] != *domains[i] {
+                new_state[var] = survivors[i].clone();
+                changed.push(Var {
+                    id: var,
+                    constraints: vec![Csp::Sum(vars.to_vec(), target)],
+                });
+            }
+        }
+        (new_state, changed)
+    }
+
+    fn state(domains: &[&[u32]]) -> State {
+        domains.iter().map(|d| d.to_vec()).collect()
+    }
+
+    fn run(initial: State, constraints: &[Csp]) -> State {
+        generalized_arc_consistency(initial, constraints).unwrap()
+    }
+
+    #[test]
+    fn equal_overlapping_domains_intersects_both() {
+        // x ∈ {1,2,3}, y ∈ {2,3,4}, x=y  →  both {2,3}
+        let result = run(state(&[&[1, 2, 3], &[2, 3, 4]]), &[Csp::Equal(0, 1)]);
+        assert_eq!(result[0], [2, 3]);
+        assert_eq!(result[1], [2, 3]);
+    }
+
+    #[test]
+    fn equal_singleton_pins_other_variable() {
+        // x ∈ {5}, y ∈ {1,2,3,4,5}, x=y  →  both {5}
+        let result = run(state(&[&[5], &[1, 2, 3, 4, 5]]), &[Csp::Equal(0, 1)]);
+        assert_eq!(result[0], [5]);
+        assert_eq!(result[1], [5]);
+    }
+
+    #[test]
+    fn equal_disjoint_domains_empties_both() {
+        // x ∈ {1,2}, y ∈ {3,4}, x=y  →  both empty (infeasible)
+        let result = run(state(&[&[1, 2], &[3, 4]]), &[Csp::Equal(0, 1)]);
+        assert!(result[0].is_empty());
+        assert!(result[1].is_empty());
+    }
+
+    #[test]
+    fn sum_two_vars_prunes_unsupported_values() {
+        // x,y ∈ {1,2,3}, x+y=5  →  only (2,3),(3,2) work, so x,y ∈ {2,3}
+        let mut result = run(state(&[&[1, 2, 3], &[1, 2, 3]]), &[Csp::Sum(vec![0, 1], 5)]);
+        result[0].sort_unstable();
+        result[1].sort_unstable();
+        assert_eq!(result[0], [2, 3]);
+        assert_eq!(result[1], [2, 3]);
+    }
+
+    #[test]
+    fn sum_three_vars_all_values_survive() {
+        // x,y,z ∈ {1,2,3}, x+y+z=6  →  permutations of (1,2,3) use every value
+        let mut result = run(
+            state(&[&[1, 2, 3], &[1, 2, 3], &[1, 2, 3]]),
+            &[Csp::Sum(vec![0, 1, 2], 6)],
+        );
+        result[0].sort_unstable();
+        result[1].sort_unstable();
+        result[2].sort_unstable();
+        assert_eq!(result[0], [1, 2, 3]);
+        assert_eq!(result[1], [1, 2, 3]);
+        assert_eq!(result[2], [1, 2, 3]);
+    }
+
+    #[test]
+    fn sum_infeasible_target_empties_domains() {
+        // x,y ∈ {1,2}, x+y=10 — impossible
+        let result = run(state(&[&[1, 2], &[1, 2]]), &[Csp::Sum(vec![0, 1], 10)]);
+        assert!(result[0].is_empty());
+        assert!(result[1].is_empty());
+    }
+
+    #[test]
+    fn propagation_chains_across_constraints() {
+        // x,y,z ∈ {1,2,3}; x+y=5 pins x,y ∈ {2,3}; then x=z chains to pin z ∈ {2,3}
+        let mut result = run(
+            state(&[&[1, 2, 3], &[1, 2, 3], &[1, 2, 3]]),
+            &[Csp::Sum(vec![0, 1], 5), Csp::Equal(0, 2)],
+        );
+        for d in &mut result {
+            d.sort_unstable();
+        }
+        assert_eq!(result[0], [2, 3]);
+        assert_eq!(result[1], [2, 3]);
+        assert_eq!(result[2], [2, 3]);
+    }
+}
