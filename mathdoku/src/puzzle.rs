@@ -168,14 +168,7 @@ impl Puzzle {
     /// # Errors
     /// Returns [`Error::InvalidCell`] if `cell` is outside the grid.
     pub(crate) fn set_cell_value(&self, cell: Cell, n: N) -> Result<Self, Error> {
-        let i = self.index(cell)?;
-        let mut values = self.values.clone();
-        values[i] = Values::new(&[n]);
-        Ok(Self {
-            n: self.n,
-            values,
-            cages: self.cages.clone(),
-        })
+        self.set_domain(cell, Values::new(&[n]))
     }
 
     /// Returns a new puzzle with `cell`'s domain replaced by `values`.
