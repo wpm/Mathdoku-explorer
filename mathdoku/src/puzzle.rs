@@ -59,7 +59,6 @@ impl Puzzle {
     ///
     /// The iterator yields [`Err`] and stops if a propagation error occurs (e.g. an
     /// out-of-bounds cell). Well-formed puzzles will never error.
-    ///
     pub fn solutions(&self) -> impl Iterator<Item = Result<Self, Error>> {
         crate::puzzle_csp::Solutions::new(self)
     }

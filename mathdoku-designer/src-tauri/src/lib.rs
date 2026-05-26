@@ -1,6 +1,3 @@
-#[cfg(any())]
-mod old;
-
 pub mod commands;
 
 use std::sync::Mutex;

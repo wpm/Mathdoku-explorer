@@ -1,6 +1,3 @@
-#[cfg(any())]
-mod old;
-
 mod app;
 mod components;
 mod theme;

@@ -1,7 +1,7 @@
 //! `CageStats` component: viable multiset/tuple counts for the active cage.
 
-use mathdoku_designer_shared::Mode;
 use leptos::prelude::*;
+use mathdoku_designer_shared::Mode;
 
 use super::puzzle::GridContext;
 

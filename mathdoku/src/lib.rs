@@ -11,10 +11,9 @@
 //!
 //! ## Entry points
 //!
-//! - **Generate** a random puzzle with [`generate::generate`] or
-//!   [`generate::generate_with`] (custom operation policy / cage-size distribution).
-//! - **Construct** a puzzle programmatically with [`Puzzle::new`] and
-//!   [`Puzzle::insert_cage`].
+//! - **Generate** a random puzzle with [`generate::generate`] or [`generate::generate_with`]
+//!   (custom operation policy / cage-size distribution).
+//! - **Construct** a puzzle programmatically with [`Puzzle::new`] and [`Puzzle::insert_cage`].
 //! - **Inspect** cell domains with [`Puzzle::get_cell_values`].
 
 mod arithmetic;

@@ -103,7 +103,8 @@ pub fn generate_puzzle(n: usize, state: State<Mutex<AppState>>) -> Result<Puzzle
 }
 
 /// # Errors
-/// Returns an error string if no puzzle is loaded, serialization fails, or the file cannot be written.
+/// Returns an error string if no puzzle is loaded, serialization fails, or the file cannot be
+/// written.
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
 pub fn save_puzzle<R: Runtime>(
@@ -128,7 +129,8 @@ pub fn save_puzzle<R: Runtime>(
 }
 
 /// # Errors
-/// Returns an error string if the file cannot be read, JSON is malformed, or the version is unsupported.
+/// Returns an error string if the file cannot be read, JSON is malformed, or the version is
+/// unsupported.
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
 pub fn load_puzzle<R: Runtime>(

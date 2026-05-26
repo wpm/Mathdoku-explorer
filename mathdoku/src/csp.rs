@@ -10,8 +10,8 @@
 //! A CSP consists of:
 //!
 //! - **Variables** — decision points, each participating in a set of constraints.
-//! - **Constraints** — relations over subsets of variables (the constraint's *scope*)
-//!   that rule out inconsistent value combinations.
+//! - **Constraints** — relations over subsets of variables (the constraint's *scope*) that rule out
+//!   inconsistent value combinations.
 //!
 //! The relationship between variables and constraints forms a bipartite *constraint graph*:
 //! variables on one side, constraints on the other, with edges connecting each variable to
@@ -39,7 +39,8 @@ pub trait Variable<C> {
     fn constraints(&self) -> Vec<C>;
 }
 
-/// A relation over a set of variables (the constraint's scope) in a constraint satisfaction problem.
+/// A relation over a set of variables (the constraint's scope) in a constraint satisfaction
+/// problem.
 ///
 /// A constraint is satisfied when the values assigned to its scope variables are jointly
 /// consistent. Propagation enforces generalized arc consistency (GAC): it removes from each

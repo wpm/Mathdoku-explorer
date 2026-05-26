@@ -65,7 +65,8 @@ impl AllDifferent {
     }
 }
 
-/// A cell participates in one [`AllDifferent`] per row and column, plus the one [`Cage`] that covers it.
+/// A cell participates in one [`AllDifferent`] per row and column, plus the one [`Cage`] that
+/// covers it.
 impl Variable<PuzzleConstraint> for PuzzleCell {
     fn constraints(&self) -> Vec<PuzzleConstraint> {
         let n = self.n;
@@ -99,7 +100,8 @@ impl Constraint<Puzzle, PuzzleCell, Error> for PuzzleConstraint {
     }
 }
 
-/// Applies `new_domains` to `state`, returning the updated state and any cells whose domains changed.
+/// Applies `new_domains` to `state`, returning the updated state and any cells whose domains
+/// changed.
 fn apply_domains(
     state: &Puzzle,
     cells: &[Cell],
@@ -146,7 +148,8 @@ pub fn puzzle_fixpoint(puzzle: &Puzzle) -> Result<Puzzle, Error> {
     generalized_arc_consistency(puzzle.clone(), &constraints)
 }
 
-/// Prunes cell domains to values that appear in at least one valid tuple for this cage's arithmetic operation.
+/// Prunes cell domains to values that appear in at least one valid tuple for this cage's arithmetic
+/// operation.
 impl Constraint<Puzzle, PuzzleCell, Error> for Cage {
     fn propagate(&self, state: &Puzzle) -> Result<(Puzzle, Vec<PuzzleCell>), Error> {
         let cells = self.cells();

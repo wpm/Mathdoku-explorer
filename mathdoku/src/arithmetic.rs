@@ -9,17 +9,20 @@ pub fn addition_multisets(n: N, k: usize, s: N) -> impl Iterator<Item = Tuple> {
     simplex_multisets(n, k, |acc, i| acc + u64::from(i), u64::from(s))
 }
 
-/// Returns an iterator over all 2-element tuples `[i, j]` with `j - i == d` and `1 <= i < j <= max`.
+/// Returns an iterator over all 2-element tuples `[i, j]` with `j - i == d` and `1 <= i < j <=
+/// max`.
 pub fn subtraction_multisets(max: N, d: N) -> impl Iterator<Item = Tuple> {
     (1..=max.saturating_sub(d)).map(move |i| vec![i, i + d])
 }
 
-/// Returns an iterator over all non-decreasing `k`-tuples with values in `1..=n` whose product is `s`.
+/// Returns an iterator over all non-decreasing `k`-tuples with values in `1..=n` whose product is
+/// `s`.
 pub fn multiplication_multisets(n: N, k: usize, s: M) -> impl Iterator<Item = Tuple> {
     simplex_multisets(n, k, |acc, i| acc * u64::from(i), u64::from(s))
 }
 
-/// Returns an iterator over all 2-element tuples `[i, j]` with `j / i == q` and `1 <= i < j <= max`.
+/// Returns an iterator over all 2-element tuples `[i, j]` with `j / i == q` and `1 <= i < j <=
+/// max`.
 pub fn division_multisets(max: N, q: N) -> impl Iterator<Item = Tuple> {
     (1..=max / q).map(move |i| vec![i, i * q])
 }

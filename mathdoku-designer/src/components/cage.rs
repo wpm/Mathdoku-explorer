@@ -1,7 +1,7 @@
 //! Cage component: operation label in the anchor cell corner.
 
-use mathdoku::{Operation, Operator};
 use leptos::prelude::*;
+use mathdoku::{Operation, Operator};
 
 use crate::theme::{INK, OP_INSET, SERIF};
 

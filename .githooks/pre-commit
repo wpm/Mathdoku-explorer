@@ -5,7 +5,8 @@ REPO_ROOT="$(git rev-parse --show-toplevel)"
 cd "$REPO_ROOT"
 
 echo "==> cargo fmt"
-cargo fmt --all
+cargo +nightly fmt --all
+(cd mathdoku-designer && cargo +nightly fmt --all)
 git add -u
 
 echo "==> cargo clippy (mathdoku)"

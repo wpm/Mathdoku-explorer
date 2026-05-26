@@ -1,6 +1,7 @@
 //! Region component: "?" label in the anchor cell corner.
 
-#![allow(dead_code)] // Leptos #[component] macro generates structs from props; dead_code can't see the macro's use of them
+#![allow(dead_code)] // Leptos #[component] macro generates structs from props; dead_code can't see the macro's use of
+                     // them
 
 use leptos::prelude::*;
 

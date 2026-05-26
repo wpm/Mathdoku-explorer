@@ -6,9 +6,9 @@
     unused_results,                 // invoke/listen/Effect::new return values are fire-and-forget in WASM
 )]
 
+use leptos::prelude::*;
 use mathdoku::Puzzle;
 use mathdoku_designer_shared::{DocState, ViewState};
-use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 
 use crate::theme::{ACCENT, BG, INK, INK2, LINE, SANS as SANS_FONT};
@@ -107,7 +107,10 @@ mod tests {
 
     #[test]
     fn windows_path() {
-        assert_eq!(basename(r"C:\Users\user\puzzle.mathdoku"), "puzzle.mathdoku");
+        assert_eq!(
+            basename(r"C:\Users\user\puzzle.mathdoku"),
+            "puzzle.mathdoku"
+        );
     }
 
     #[test]

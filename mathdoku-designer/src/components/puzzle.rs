@@ -8,17 +8,15 @@
 //! The fundamental unit of selection is an individual grid cell.
 //! - One cell is selected at a time, shown with a heavier outline.
 //! - Arrow keys move the selection; movement stops at the puzzle boundary.
-//! - Tab or Shift-Tab switches to Slot Mode, selecting the slot that contains
-//!   the current cell.
+//! - Tab or Shift-Tab switches to Slot Mode, selecting the slot that contains the current cell.
 //!
 //! ## Slot Mode
 //! The fundamental unit of selection is a cage or region slot (a polyomino).
-//! - One slot is selected at a time; all cells of that slot receive a heavier
-//!   outline.
+//! - One slot is selected at a time; all cells of that slot receive a heavier outline.
 //! - Tab advances to the next slot in polyomino order (wrapping around).
 //! - Shift-Tab moves to the previous slot (wrapping around).
-//! - An arrow key switches back to Cell Mode, placing the selection at the
-//!   anchor cell of the current slot and then moving one step in that direction.
+//! - An arrow key switches back to Cell Mode, placing the selection at the anchor cell of the
+//!   current slot and then moving one step in that direction.
 
 #![allow(
     clippy::cast_precision_loss,
@@ -28,9 +26,9 @@
     unused_results,                 // invoke/Effect::new/HashSet::insert/Vec::pop are fire-and-forget in reactive WASM code
 )]
 
+use leptos::prelude::*;
 use mathdoku::Puzzle as KenkenPuzzle;
 use mathdoku_designer_shared::{Mode, ViewState};
-use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 
 use super::cage::Cage;
@@ -45,7 +43,6 @@ use crate::theme::{BG, CAGE_PALETTE, INK, LINE, OP_INSET};
 pub const MARGIN: f64 = 14.0;
 const THICK: f64 = 2.2;
 const THIN: f64 = 0.5;
-
 
 // ---- context ----
 
@@ -75,12 +72,15 @@ impl PuzzleRef {
 
     /// Returns the number of solutions, or `None` if not all cells are covered by cages.
     pub fn solution_count(&self) -> Option<usize> {
-        let puzzle = self.0.puzzle.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let puzzle = self
+            .0
+            .puzzle
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let n = self.0.n;
         // Return None if not all cells are covered by a cage.
-        let covered: std::collections::HashSet<_> = puzzle.cages()
-            .flat_map(mathdoku::Cage::cells)
-            .collect();
+        let covered: std::collections::HashSet<_> =
+            puzzle.cages().flat_map(mathdoku::Cage::cells).collect();
         if covered.len() < n * n {
             return None;
         }
@@ -90,24 +90,41 @@ impl PuzzleRef {
     /// Returns `(multisets, tuples)` for `slot_idx`.
     pub fn viable_counts(&self, slot_idx: usize) -> Option<(usize, usize)> {
         let cage = self.0.cages.get(slot_idx)?;
-        let puzzle = self.0.puzzle.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let puzzle = self
+            .0
+            .puzzle
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let n = self.0.n as u8;
         // Get current domain for each cell in the cage.
-        let cell_domains: Vec<std::collections::HashSet<u8>> = cage.cells().into_iter()
+        let cell_domains: Vec<std::collections::HashSet<u8>> = cage
+            .cells()
+            .into_iter()
             .map(|cell| {
-                puzzle.get_cell_values(cell)
+                puzzle
+                    .get_cell_values(cell)
                     .map(|v| v.values().into_iter().collect())
                     .unwrap_or_default()
             })
             .collect();
         // Count tuples that are consistent with current domains.
         let tuples: Vec<_> = cage.tuples(n).collect();
-        let valid_tuples: Vec<_> = tuples.iter()
-            .filter(|t| t.iter().zip(&cell_domains).all(|(v, domain)| domain.contains(v)))
+        let valid_tuples: Vec<_> = tuples
+            .iter()
+            .filter(|t| {
+                t.iter()
+                    .zip(&cell_domains)
+                    .all(|(v, domain)| domain.contains(v))
+            })
             .collect();
         // Multisets: unique sorted value sets among valid tuples.
-        let multisets: std::collections::HashSet<Vec<u8>> = valid_tuples.iter()
-            .map(|t| { let mut s = (*t).clone(); s.sort_unstable(); s })
+        let multisets: std::collections::HashSet<Vec<u8>> = valid_tuples
+            .iter()
+            .map(|t| {
+                let mut s = (*t).clone();
+                s.sort_unstable();
+                s
+            })
             .collect();
         Some((multisets.len(), valid_tuples.len()))
     }
@@ -261,7 +278,11 @@ pub fn Puzzle(
     let slots: SlotList = puzzle
         .cages()
         .map(|cage| {
-            let cells = cage.cells().into_iter().map(|c| (c.row, c.column)).collect();
+            let cells = cage
+                .cells()
+                .into_iter()
+                .map(|c| (c.row, c.column))
+                .collect();
             (cells, cage.clone())
         })
         .collect();
@@ -498,7 +519,8 @@ pub fn Puzzle(
                                 .unwrap_or(0);
                             provisional_region.set(Vec::new());
                             undo_stack.update(|s| {
-                                // Replace provisional cell entries with a single CommitRegion entry.
+                                // Replace provisional cell entries with a single CommitRegion
+                                // entry.
                                 while matches!(s.last(), Some(UndoEntry::AddProvisionalCell)) {
                                     s.pop();
                                 }
