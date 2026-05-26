@@ -1,6 +1,7 @@
 //! `SolutionCount` component: number of solutions when the puzzle is complete.
 
 use leptos::prelude::*;
+use leptos::task::spawn_local;
 
 use super::puzzle::GridContext;
 
@@ -47,7 +48,7 @@ pub fn SolutionCount() -> impl IntoView {
     // Whether the async call has resolved (distinguishes "solving" from "incomplete").
     let resolved: RwSignal<bool> = RwSignal::new(false);
 
-    leptos::task::spawn_local(async move {
+    spawn_local(async move {
         let n = ctx.puzzle_ref.solution_count();
         count.set(n);
         resolved.set(true);

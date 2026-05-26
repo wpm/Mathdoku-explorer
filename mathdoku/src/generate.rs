@@ -234,6 +234,7 @@ fn grid_neighbors(cell: Cell, n: usize) -> impl Iterator<Item = Cell> {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use rand::SeedableRng;
+    use rand_chacha::ChaCha8Rng;
 
     use super::*;
 
@@ -300,7 +301,7 @@ mod tests {
 
     #[test]
     fn size_distribution_poisson_samples_within_bounds() {
-        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0);
+        let mut rng = ChaCha8Rng::seed_from_u64(0);
         for (mean, n) in [(0.5_f64, 3_usize), (1.0, 4), (3.0, 9), (5.0, 4)] {
             let dist = SizeDistribution::new(mean).unwrap();
             for _ in 0..200 {
@@ -323,7 +324,7 @@ mod tests {
         // Mean (8) is well above the upper bound (n*n = 4), so most raw
         // Poisson draws are rejected. Sampling must still terminate and
         // never escape the truncation window.
-        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(7);
+        let mut rng = ChaCha8Rng::seed_from_u64(7);
         let dist = SizeDistribution::new(8.0).unwrap();
         for _ in 0..100 {
             let s = dist.sample(2, &mut rng);
@@ -343,7 +344,7 @@ mod tests {
     #[test]
     #[allow(clippy::cast_precision_loss)]
     fn poisson_empirical_mean_close_to_target() {
-        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(123);
+        let mut rng = ChaCha8Rng::seed_from_u64(123);
         for target in [0.5_f64, 1.0, 2.5, 4.0] {
             let n_samples: usize = 20_000;
             let sum: usize = (0..n_samples).map(|_| poisson(target, &mut rng)).sum();
@@ -361,7 +362,7 @@ mod tests {
         for seed in 0u64..200 {
             let mean = if seed % 2 == 0 { 1.0 } else { 2.5 };
             let dist = SizeDistribution::new(mean).unwrap();
-            let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(seed);
+            let mut rng = ChaCha8Rng::seed_from_u64(seed);
             let n = if seed % 3 == 0 { 4 } else { 3 };
             let tiling = greedy(n, dist, &mut rng).unwrap();
             let covered: HashSet<Cell> = tiling.iter().flat_map(Polyomino::cells).collect();
@@ -371,13 +372,13 @@ mod tests {
 
     #[test]
     fn generate_returns_a_puzzle() {
-        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(7);
+        let mut rng = ChaCha8Rng::seed_from_u64(7);
         assert!(generate(4, &mut rng).is_ok());
     }
 
     #[test]
     fn generate_invalid_n_returns_err() {
-        let mut rng = rand_chacha::ChaCha8Rng::seed_from_u64(0);
+        let mut rng = ChaCha8Rng::seed_from_u64(0);
         assert!(generate(0, &mut rng).is_err());
         assert!(generate(10, &mut rng).is_err());
     }

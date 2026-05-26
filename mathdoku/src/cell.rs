@@ -142,6 +142,8 @@ impl<'de> Deserialize<'de> for Values {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
+    use serde_json::{from_str, to_string};
+
     use super::*;
 
     #[test]
@@ -264,23 +266,23 @@ mod tests {
     #[test]
     fn values_round_trips_through_json() {
         let values = Values::new(&[1, 3, 5]);
-        let json = serde_json::to_string(&values).unwrap();
+        let json = to_string(&values).unwrap();
         assert_eq!(json, "[1,3,5]");
-        let restored: Values = serde_json::from_str(&json).unwrap();
+        let restored: Values = from_str(&json).unwrap();
         assert_eq!(values, restored);
     }
 
     #[test]
     fn empty_values_round_trips_through_json() {
         let values = Values::default();
-        let json = serde_json::to_string(&values).unwrap();
-        let restored: Values = serde_json::from_str(&json).unwrap();
+        let json = to_string(&values).unwrap();
+        let restored: Values = from_str(&json).unwrap();
         assert_eq!(values, restored);
     }
 
     #[test]
     fn values_deserialize_rejects_out_of_range_values() {
-        assert!(serde_json::from_str::<Values>("[0]").is_err());
-        assert!(serde_json::from_str::<Values>("[10]").is_err());
+        assert!(from_str::<Values>("[0]").is_err());
+        assert!(from_str::<Values>("[10]").is_err());
     }
 }

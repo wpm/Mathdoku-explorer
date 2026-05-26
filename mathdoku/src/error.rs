@@ -4,6 +4,7 @@
 //! [`fmt::Display`], and the enum implements [`std::error::Error`] so it
 //! composes with standard error-handling idioms.
 
+use std::error::Error as StdError;
 use std::fmt;
 
 use crate::cage::{Cage, Operation, Operator};
@@ -129,7 +130,7 @@ impl fmt::Display for Error {
     }
 }
 
-impl std::error::Error for Error {}
+impl StdError for Error {}
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]

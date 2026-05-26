@@ -7,9 +7,11 @@
 )]
 
 use leptos::prelude::*;
+use leptos::task::spawn_local;
 use mathdoku::Puzzle;
 use mathdoku_designer_shared::{DocState, ViewState};
 use serde::Serialize;
+use serde_wasm_bindgen::{from_value, to_value};
 use wasm_bindgen::prelude::*;
 
 use crate::theme::{ACCENT, BG, INK, INK2, LINE, SANS as SANS_FONT};
@@ -36,7 +38,7 @@ struct PathArgs {
 
 async fn get_doc_state() -> DocState {
     let v = invoke("get_doc_state", JsValue::NULL).await;
-    serde_wasm_bindgen::from_value(v).unwrap_or_default()
+    from_value(v).unwrap_or_default()
 }
 
 /// Extracts the error string from a Tauri command result that returned `Err`.
@@ -48,21 +50,21 @@ fn tauri_error(v: &JsValue) -> Option<String> {
 }
 
 async fn call_new_puzzle(n: usize) -> Result<Puzzle, String> {
-    let args = serde_wasm_bindgen::to_value(&NewPuzzleArgs { n }).unwrap();
+    let args = to_value(&NewPuzzleArgs { n }).unwrap();
     let result = invoke("new_puzzle", args).await;
     if let Some(e) = tauri_error(&result) {
         return Err(e);
     }
-    serde_wasm_bindgen::from_value(result).map_err(|e| e.to_string())
+    from_value(result).map_err(|e| e.to_string())
 }
 
 async fn call_generate_puzzle(n: usize) -> Result<Puzzle, String> {
-    let args = serde_wasm_bindgen::to_value(&NewPuzzleArgs { n }).unwrap();
+    let args = to_value(&NewPuzzleArgs { n }).unwrap();
     let result = invoke("generate_puzzle", args).await;
     if let Some(e) = tauri_error(&result) {
         return Err(e);
     }
-    serde_wasm_bindgen::from_value(result).map_err(|e| e.to_string())
+    from_value(result).map_err(|e| e.to_string())
 }
 
 async fn call_save_puzzle() -> Option<String> {
@@ -72,7 +74,7 @@ async fn call_save_puzzle() -> Option<String> {
         None => pick_save_path().await,
     };
     if let Some(path) = path {
-        let args = serde_wasm_bindgen::to_value(&PathArgs { path: path.clone() }).unwrap();
+        let args = to_value(&PathArgs { path: path.clone() }).unwrap();
         invoke("save_puzzle", args).await;
         return Some(path);
     }
@@ -81,7 +83,7 @@ async fn call_save_puzzle() -> Option<String> {
 
 async fn call_save_as_puzzle() -> Option<String> {
     if let Some(path) = pick_save_path().await {
-        let args = serde_wasm_bindgen::to_value(&PathArgs { path: path.clone() }).unwrap();
+        let args = to_value(&PathArgs { path: path.clone() }).unwrap();
         invoke("save_puzzle", args).await;
         return Some(path);
     }
@@ -105,14 +107,12 @@ async fn call_load_puzzle() -> Result<Option<Puzzle>, String> {
     else {
         return Ok(None); // user cancelled the dialog
     };
-    let args = serde_wasm_bindgen::to_value(&PathArgs { path }).unwrap();
+    let args = to_value(&PathArgs { path }).unwrap();
     let result = invoke("load_puzzle", args).await;
     if let Some(e) = tauri_error(&result) {
         return Err(e);
     }
-    serde_wasm_bindgen::from_value(result)
-        .map(Some)
-        .map_err(|e| e.to_string())
+    from_value(result).map(Some).map_err(|e| e.to_string())
 }
 
 fn basename(path: &str) -> &str {
@@ -398,11 +398,11 @@ pub fn App() -> impl IntoView {
     let current_path: RwSignal<Option<String>> = RwSignal::new(None);
 
     // Check if a puzzle was already restored from the recent file on startup.
-    leptos::task::spawn_local(async move {
+    spawn_local(async move {
         let result = invoke("get_puzzle", JsValue::NULL).await;
-        if let Ok(p) = serde_wasm_bindgen::from_value::<Puzzle>(result) {
+        if let Ok(p) = from_value::<Puzzle>(result) {
             let vs = invoke("get_view_state", JsValue::NULL).await;
-            if let Ok(v) = serde_wasm_bindgen::from_value::<ViewState>(vs) {
+            if let Ok(v) = from_value::<ViewState>(vs) {
                 view_state.set(v);
             }
             let ds = get_doc_state().await;
@@ -411,7 +411,7 @@ pub fn App() -> impl IntoView {
         }
     });
 
-    leptos::task::spawn_local(async move {
+    spawn_local(async move {
         let new_cb = Closure::wrap(Box::new(move |_: JsValue| {
             show_size_modal.set(true);
         }) as Box<dyn Fn(JsValue)>);
@@ -420,7 +420,7 @@ pub fn App() -> impl IntoView {
         new_cb.forget();
 
         let save_cb = Closure::wrap(Box::new(move |_: JsValue| {
-            leptos::task::spawn_local(async move {
+            spawn_local(async move {
                 if let Some(path) = call_save_puzzle().await {
                     current_path.set(Some(path));
                 }
@@ -430,7 +430,7 @@ pub fn App() -> impl IntoView {
         save_cb.forget();
 
         let save_as_cb = Closure::wrap(Box::new(move |_: JsValue| {
-            leptos::task::spawn_local(async move {
+            spawn_local(async move {
                 if let Some(path) = call_save_as_puzzle().await {
                     current_path.set(Some(path));
                 }
@@ -440,7 +440,7 @@ pub fn App() -> impl IntoView {
         save_as_cb.forget();
 
         let load_cb = Closure::wrap(Box::new(move |_: JsValue| {
-            leptos::task::spawn_local(async move {
+            spawn_local(async move {
                 match call_load_puzzle().await {
                     Ok(Some(p)) => {
                         let ds = get_doc_state().await;
@@ -465,7 +465,7 @@ pub fn App() -> impl IntoView {
 
     let on_empty = Callback::new(move |n: usize| {
         show_size_modal.set(false);
-        leptos::task::spawn_local(async move {
+        spawn_local(async move {
             match call_new_puzzle(n).await {
                 Ok(p) => {
                     current_path.set(None);
@@ -478,7 +478,7 @@ pub fn App() -> impl IntoView {
     });
     let on_random = Callback::new(move |n: usize| {
         show_size_modal.set(false);
-        leptos::task::spawn_local(async move {
+        spawn_local(async move {
             match call_generate_puzzle(n).await {
                 Ok(p) => {
                     current_path.set(None);
@@ -493,14 +493,14 @@ pub fn App() -> impl IntoView {
 
     let on_unsaved_save = Callback::new(move |(): ()| {
         show_unsaved_modal.set(false);
-        leptos::task::spawn_local(async move {
+        spawn_local(async move {
             call_save_puzzle().await;
             call_quit().await;
         });
     });
     let on_unsaved_discard = Callback::new(move |(): ()| {
         show_unsaved_modal.set(false);
-        leptos::task::spawn_local(async move { call_quit().await });
+        spawn_local(async move { call_quit().await });
     });
     let on_unsaved_cancel = Callback::new(move |(): ()| show_unsaved_modal.set(false));
 
@@ -509,12 +509,12 @@ pub fn App() -> impl IntoView {
             .get()
             .map(|p| basename(&p).to_owned())
             .unwrap_or_default();
-        leptos::task::spawn_local(async move {
+        spawn_local(async move {
             #[derive(Serialize)]
             struct TitleArgs {
                 title: String,
             }
-            let args = serde_wasm_bindgen::to_value(&TitleArgs { title }).unwrap();
+            let args = to_value(&TitleArgs { title }).unwrap();
             invoke("set_window_title", args).await;
         });
     });

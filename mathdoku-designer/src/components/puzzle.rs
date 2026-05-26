@@ -26,10 +26,15 @@
     unused_results,                 // invoke/Effect::new/HashSet::insert/Vec::pop are fire-and-forget in reactive WASM code
 )]
 
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex, PoisonError};
+
 use leptos::prelude::*;
-use mathdoku::Puzzle as KenkenPuzzle;
+use leptos::task::spawn_local;
+use mathdoku::{Cage as MathdokoCage, Cell as MathdokuCell, Puzzle as KenkenPuzzle};
 use mathdoku_designer_shared::{Mode, ViewState};
 use serde::Serialize;
+use serde_wasm_bindgen::{from_value, to_value};
 use wasm_bindgen::prelude::*;
 
 use super::cage::Cage;
@@ -52,20 +57,20 @@ const THIN: f64 = 0.5;
 /// The `Mutex` is needed only to satisfy `Send + Sync` for `provide_context`; on
 /// single-threaded WASM there is never actual contention.
 #[derive(Clone)]
-pub struct PuzzleRef(std::sync::Arc<PuzzleRefInner>);
+pub struct PuzzleRef(Arc<PuzzleRefInner>);
 
 struct PuzzleRefInner {
-    puzzle: std::sync::Mutex<KenkenPuzzle>,
+    puzzle: Mutex<KenkenPuzzle>,
     /// Cages in slot order.
-    cages: Vec<mathdoku::Cage>,
+    cages: Vec<MathdokoCage>,
     /// Grid size.
     n: usize,
 }
 
 impl PuzzleRef {
-    fn new(puzzle: KenkenPuzzle, cages: Vec<mathdoku::Cage>, n: usize) -> Self {
-        Self(std::sync::Arc::new(PuzzleRefInner {
-            puzzle: std::sync::Mutex::new(puzzle),
+    fn new(puzzle: KenkenPuzzle, cages: Vec<MathdokoCage>, n: usize) -> Self {
+        Self(Arc::new(PuzzleRefInner {
+            puzzle: Mutex::new(puzzle),
             cages,
             n,
         }))
@@ -73,15 +78,10 @@ impl PuzzleRef {
 
     /// Returns the number of solutions, or `None` if not all cells are covered by cages.
     pub fn solution_count(&self) -> Option<usize> {
-        let puzzle = self
-            .0
-            .puzzle
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let puzzle = self.0.puzzle.lock().unwrap_or_else(PoisonError::into_inner);
         let n = self.0.n;
         // Return None if not all cells are covered by a cage.
-        let covered: std::collections::HashSet<_> =
-            puzzle.cages().flat_map(mathdoku::Cage::cells).collect();
+        let covered: HashSet<_> = puzzle.cages().flat_map(MathdokoCage::cells).collect();
         if covered.len() < n * n {
             return None;
         }
@@ -91,14 +91,10 @@ impl PuzzleRef {
     /// Returns `(multisets, tuples)` for `slot_idx`.
     pub fn viable_counts(&self, slot_idx: usize) -> Option<(usize, usize)> {
         let cage = self.0.cages.get(slot_idx)?;
-        let puzzle = self
-            .0
-            .puzzle
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let puzzle = self.0.puzzle.lock().unwrap_or_else(PoisonError::into_inner);
         let n = self.0.n as u8;
         // Get current domain for each cell in the cage.
-        let cell_domains: Vec<std::collections::HashSet<u8>> = cage
+        let cell_domains: Vec<HashSet<u8>> = cage
             .cells()
             .into_iter()
             .map(|cell| {
@@ -119,7 +115,7 @@ impl PuzzleRef {
             })
             .collect();
         // Multisets: unique sorted value sets among valid tuples.
-        let multisets: std::collections::HashSet<Vec<u8>> = valid_tuples
+        let multisets: HashSet<Vec<u8>> = valid_tuples
             .iter()
             .map(|t| {
                 let mut s = (*t).clone();
@@ -224,7 +220,7 @@ fn assign_colors(n: usize, slots: &[Vec<(usize, usize)>]) -> (Vec<usize>, Vec<Ve
     }
     let mut color = vec![0usize; slots.len()];
     for (i, cells) in slots.iter().enumerate() {
-        let mut used = std::collections::HashSet::new();
+        let mut used = HashSet::new();
         for &(r, c) in cells {
             for (nr, nc) in neighbors(r, c, n) {
                 if let Some(j) = cell_slot[nr][nc]
@@ -261,7 +257,7 @@ extern "C" {
 // ---- Puzzle component ----
 
 /// Each slot is a list of (row, col) pairs and the cage covering it.
-type SlotList = Vec<(Vec<(usize, usize)>, mathdoku::Cage)>;
+type SlotList = Vec<(Vec<(usize, usize)>, MathdokoCage)>;
 
 #[component]
 #[allow(clippy::needless_pass_by_value, clippy::too_many_lines)]
@@ -290,14 +286,14 @@ pub fn Puzzle(
         .collect();
 
     let slot_cells: Vec<Vec<(usize, usize)>> = slots.iter().map(|(c, _)| c.clone()).collect();
-    let slot_cages: Vec<mathdoku::Cage> = slots.iter().map(|(_, cage)| cage.clone()).collect();
+    let slot_cages: Vec<MathdokoCage> = slots.iter().map(|(_, cage)| cage.clone()).collect();
     let (colors, cell_slot) = assign_colors(n, &slot_cells);
 
     // Per-cell domains.
     let mut domains = vec![vec![vec![]; n]; n];
     for (r, row) in domains.iter_mut().enumerate() {
         for (c, cell_domain) in row.iter_mut().enumerate() {
-            let cell_ref = mathdoku::Cell::new(r, c);
+            let cell_ref = MathdokuCell::new(r, c);
             if let Ok(vals) = puzzle.get_cell_values(cell_ref) {
                 *cell_domain = vals.values();
             }
@@ -342,8 +338,8 @@ pub fn Puzzle(
             cell_col: selected_cell.get().1,
             slot_idx: selected_slot.get(),
         };
-        leptos::task::spawn_local(async move {
-            if let Ok(args) = serde_wasm_bindgen::to_value(&Args { view }) {
+        spawn_local(async move {
+            if let Ok(args) = to_value(&Args { view }) {
                 invoke("set_view_state", args).await;
             }
         });
@@ -495,27 +491,23 @@ pub fn Puzzle(
                             .iter()
                             .map(|&(row, column)| CellArg { row, column })
                             .collect();
-                        leptos::task::spawn_local(async move {
-                            let args =
-                                serde_wasm_bindgen::to_value(&AddRegionArgs { cells: cells_arg });
+                        spawn_local(async move {
+                            let args = to_value(&AddRegionArgs { cells: cells_arg });
                             let Ok(args) = args else { return };
                             let result = invoke("add_region", args).await;
                             if let Some(e) = result.as_string() {
                                 on_error.run(e);
                                 return;
                             }
-                            let Ok(new_puzzle) =
-                                serde_wasm_bindgen::from_value::<KenkenPuzzle>(result)
-                            else {
+                            let Ok(new_puzzle) = from_value::<KenkenPuzzle>(result) else {
                                 return;
                             };
                             // Find the slot index of the new cage in the new puzzle.
-                            let commit_set: std::collections::HashSet<_> =
-                                commit_cells.iter().copied().collect();
+                            let commit_set: HashSet<_> = commit_cells.iter().copied().collect();
                             let new_slot_idx = new_puzzle
                                 .cages()
                                 .position(|cage| {
-                                    let cells: std::collections::HashSet<_> = cage
+                                    let cells: HashSet<_> = cage
                                         .cells()
                                         .into_iter()
                                         .map(|c| (c.row, c.column))

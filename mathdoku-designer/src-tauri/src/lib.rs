@@ -1,8 +1,11 @@
 pub mod commands;
 
-use std::sync::Mutex;
+use std::fs;
+use std::path::Path;
+use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use serde::Serialize;
+use serde_json::{from_str, json, to_string, to_string_pretty};
 
 use mathdoku::Puzzle;
 use tauri::image::Image;
@@ -144,8 +147,8 @@ fn handle_window_event<R: Runtime>(window: &tauri::Window<R>, event: &WindowEven
 fn try_restore<R: Runtime>(app: &AppHandle<R>) -> Option<Puzzle> {
     let record = read_recent(app)?;
     let path = record.path?;
-    let json = std::fs::read_to_string(&path).ok()?;
-    let envelope: SaveEnvelope = serde_json::from_str(&json).ok()?;
+    let json = fs::read_to_string(&path).ok()?;
+    let envelope: SaveEnvelope = from_str(&json).ok()?;
     if envelope.version != SAVE_VERSION {
         return None;
     }
@@ -201,6 +204,8 @@ pub fn run() {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
+    use std::env::temp_dir;
+
     use super::*;
     use commands::{
         SAVE_VERSION, SaveEnvelope, get_doc_state, get_puzzle, load_puzzle, new_puzzle,
@@ -208,8 +213,8 @@ mod tests {
     };
 
     // Serialize tests that read/write the shared on-disk recent file.
-    static RECENT_FILE_LOCK: std::sync::OnceLock<Mutex<()>> = std::sync::OnceLock::new();
-    fn recent_file_lock() -> std::sync::MutexGuard<'static, ()> {
+    static RECENT_FILE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    fn recent_file_lock() -> MutexGuard<'static, ()> {
         RECENT_FILE_LOCK
             .get_or_init(|| Mutex::new(()))
             .lock()
@@ -221,15 +226,15 @@ mod tests {
         path: Option<String>,
     }
 
-    fn write_recent_test(recent: &std::path::Path, puzzle_path: &str) {
+    fn write_recent_test(recent: &Path, puzzle_path: &str) {
         if let Some(parent) = recent.parent() {
-            let _ = std::fs::create_dir_all(parent);
+            let _ = fs::create_dir_all(parent);
         }
-        let json = serde_json::to_string(&RecentRecord {
+        let json = to_string(&RecentRecord {
             path: Some(puzzle_path.to_owned()),
         })
         .unwrap();
-        std::fs::write(recent, json).unwrap();
+        fs::write(recent, json).unwrap();
     }
 
     fn mock_app() -> tauri::App<tauri::test::MockRuntime> {
@@ -292,7 +297,7 @@ mod tests {
     fn save_and_load_round_trips_puzzle() {
         let _guard = recent_file_lock();
         let app = app_with_puzzle(5);
-        let path = std::env::temp_dir()
+        let path = temp_dir()
             .join("mathdoku_test_save_load.mathdoku")
             .to_str()
             .unwrap()
@@ -328,7 +333,7 @@ mod tests {
         let app = app_with_puzzle(4);
         // Mark dirty first.
         app.state::<Mutex<AppState>>().lock().unwrap().dirty = true;
-        let path = std::env::temp_dir()
+        let path = temp_dir()
             .join("mathdoku_test_save_dirty.mathdoku")
             .to_str()
             .unwrap()
@@ -383,14 +388,14 @@ mod tests {
 
     #[test]
     fn load_puzzle_rejects_wrong_version() {
-        let path = std::env::temp_dir()
+        let path = temp_dir()
             .join("mathdoku_test_bad_version.mathdoku")
             .to_str()
             .unwrap()
             .to_string();
         let puzzle = Puzzle::new(3).unwrap();
-        let bad = serde_json::json!({ "version": 99, "puzzle": puzzle });
-        std::fs::write(&path, serde_json::to_string(&bad).unwrap()).unwrap();
+        let bad = json!({ "version": 99, "puzzle": puzzle });
+        fs::write(&path, to_string(&bad).unwrap()).unwrap();
 
         let app = app_with_state();
         let err =
@@ -400,12 +405,12 @@ mod tests {
 
     #[test]
     fn load_puzzle_rejects_malformed_json() {
-        let path = std::env::temp_dir()
+        let path = temp_dir()
             .join("mathdoku_test_malformed.mathdoku")
             .to_str()
             .unwrap()
             .to_string();
-        std::fs::write(&path, "not json").unwrap();
+        fs::write(&path, "not json").unwrap();
 
         let app = app_with_state();
         assert!(load_puzzle(path, app.handle().clone(), app.state::<Mutex<AppState>>()).is_err());
@@ -457,7 +462,7 @@ mod tests {
         let _guard = recent_file_lock();
         let app = app_with_state();
         if let Some(recent) = recent_path(app.handle()) {
-            let _ = std::fs::remove_file(recent);
+            let _ = fs::remove_file(recent);
         }
         assert!(try_restore(app.handle()).is_none());
     }
@@ -465,7 +470,7 @@ mod tests {
     #[test]
     fn try_restore_loads_puzzle_from_saved_file() {
         let _guard = recent_file_lock();
-        let puzzle_path = std::env::temp_dir()
+        let puzzle_path = temp_dir()
             .join("mathdoku_test_restore.mathdoku")
             .to_str()
             .unwrap()
@@ -475,11 +480,7 @@ mod tests {
             version: SAVE_VERSION,
             puzzle,
         };
-        std::fs::write(
-            &puzzle_path,
-            serde_json::to_string_pretty(&envelope).unwrap(),
-        )
-        .unwrap();
+        fs::write(&puzzle_path, to_string_pretty(&envelope).unwrap()).unwrap();
 
         let app = app_with_state();
         let recent = recent_path(app.handle()).unwrap();
@@ -494,27 +495,27 @@ mod tests {
         assert_eq!(s.path.as_deref(), Some(puzzle_path.as_str()));
         drop(s);
 
-        let _ = std::fs::remove_file(&recent);
+        let _ = fs::remove_file(&recent);
     }
 
     #[test]
     fn try_restore_returns_none_for_wrong_version() {
         let _guard = recent_file_lock();
-        let puzzle_path = std::env::temp_dir()
+        let puzzle_path = temp_dir()
             .join("mathdoku_test_restore_bad_ver.mathdoku")
             .to_str()
             .unwrap()
             .to_string();
         let puzzle = Puzzle::new(3).unwrap();
-        let bad = serde_json::json!({ "version": 99, "puzzle": puzzle });
-        std::fs::write(&puzzle_path, serde_json::to_string(&bad).unwrap()).unwrap();
+        let bad = json!({ "version": 99, "puzzle": puzzle });
+        fs::write(&puzzle_path, to_string(&bad).unwrap()).unwrap();
 
         let app = app_with_state();
         let recent = recent_path(app.handle()).unwrap();
         write_recent_test(&recent, &puzzle_path);
 
         assert!(try_restore(app.handle()).is_none());
-        let _ = std::fs::remove_file(&recent);
+        let _ = fs::remove_file(&recent);
     }
 
     // ---- handle_menu_event ----

@@ -262,6 +262,8 @@ impl<'de> Deserialize<'de> for Puzzle {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
+    use serde_json::{Value, from_str, json, to_string};
+
     use super::*;
     use crate::M;
     use crate::cage::{Cage, Operation, Operator};
@@ -589,31 +591,31 @@ mod tests {
             .unwrap()
             .insert_cage(cage_at(&[(0, 2)], Operator::Given, 2))
             .unwrap();
-        let json = serde_json::to_string(&p).unwrap();
-        let restored: Puzzle = serde_json::from_str(&json).unwrap();
+        let json = to_string(&p).unwrap();
+        let restored: Puzzle = from_str(&json).unwrap();
         assert_eq!(p, restored);
     }
 
     #[test]
     fn puzzle_deserialize_invalid_n_returns_err() {
         let json = r#"{"n":0,"values":[],"cages":[]}"#;
-        assert!(serde_json::from_str::<Puzzle>(json).is_err());
+        assert!(from_str::<Puzzle>(json).is_err());
         let json = r#"{"n":10,"values":[],"cages":[]}"#;
-        assert!(serde_json::from_str::<Puzzle>(json).is_err());
+        assert!(from_str::<Puzzle>(json).is_err());
     }
 
     #[test]
     fn puzzle_deserialize_wrong_row_count_returns_err() {
         // n=2 but only 1 row provided
         let json = r#"{"n":2,"values":[[1,2]],"cages":[]}"#;
-        assert!(serde_json::from_str::<Puzzle>(json).is_err());
+        assert!(from_str::<Puzzle>(json).is_err());
     }
 
     #[test]
     fn puzzle_deserialize_wrong_column_count_returns_err() {
         // n=2 but rows have 3 columns
         let json = r#"{"n":2,"values":[[1,2,3],[1,2,3]],"cages":[]}"#;
-        assert!(serde_json::from_str::<Puzzle>(json).is_err());
+        assert!(from_str::<Puzzle>(json).is_err());
     }
 
     #[test]
@@ -622,10 +624,10 @@ mod tests {
             .unwrap()
             .set_cell_value(Cell::new(0, 0), 1)
             .unwrap();
-        let json = serde_json::to_string(&p).unwrap();
-        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let json = to_string(&p).unwrap();
+        let v: Value = from_str(&json).unwrap();
         // values[0][0] should be the singleton [1]
-        assert_eq!(v["values"][0][0], serde_json::json!([1]));
+        assert_eq!(v["values"][0][0], json!([1]));
     }
 
     #[test]

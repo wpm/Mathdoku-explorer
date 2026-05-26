@@ -1,9 +1,13 @@
+use std::collections::HashSet;
+use std::fs;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Mutex, PoisonError};
 
 use serde::{Deserialize, Serialize};
+use serde_json::{from_str, to_string, to_string_pretty};
 
-use mathdoku::Puzzle;
+use mathdoku::generate::generate;
+use mathdoku::{Cage, Puzzle};
 use mathdoku::{Cell, Operation, Operator, Polyomino};
 use mathdoku_designer_shared::{DocState, ViewState};
 use tauri::{AppHandle, Manager, Runtime, State};
@@ -46,17 +50,17 @@ pub fn write_recent<R: Runtime>(app: &AppHandle<R>, path: Option<&str>, view: &V
     match path {
         Some(p) => {
             if let Some(parent) = file.parent() {
-                let _ = std::fs::create_dir_all(parent);
+                let _ = fs::create_dir_all(parent);
             }
-            if let Ok(json) = serde_json::to_string(&Record {
+            if let Ok(json) = to_string(&Record {
                 path: Some(p),
                 view,
             }) {
-                let _ = std::fs::write(file, json);
+                let _ = fs::write(file, json);
             }
         }
         None => {
-            let _ = std::fs::remove_file(file);
+            let _ = fs::remove_file(file);
         }
     }
 }
@@ -70,8 +74,8 @@ pub struct RecentRecord {
 
 pub fn read_recent<R: Runtime>(app: &AppHandle<R>) -> Option<RecentRecord> {
     let file = recent_path(app)?;
-    let content = std::fs::read_to_string(file).ok()?;
-    serde_json::from_str::<RecentRecord>(&content).ok()
+    let content = fs::read_to_string(file).ok()?;
+    from_str::<RecentRecord>(&content).ok()
 }
 
 // ---- commands ----
@@ -95,7 +99,7 @@ pub fn new_puzzle(n: usize, state: State<Mutex<AppState>>) -> Result<Puzzle, Str
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
 pub fn generate_puzzle(n: usize, state: State<Mutex<AppState>>) -> Result<Puzzle, String> {
-    let puzzle = mathdoku::generate::generate(n, &mut rand::rng()).map_err(|e| e.to_string())?;
+    let puzzle = generate(n, &mut rand::rng()).map_err(|e| e.to_string())?;
     let mut s = state.lock().map_err(|e| e.to_string())?;
     s.puzzle = Some(puzzle.clone());
     s.path = None;
@@ -120,8 +124,8 @@ pub fn save_puzzle<R: Runtime>(
         version: SAVE_VERSION,
         puzzle,
     };
-    let json = serde_json::to_string_pretty(&envelope).map_err(|e| e.to_string())?;
-    std::fs::write(&path, &json).map_err(|e| e.to_string())?;
+    let json = to_string_pretty(&envelope).map_err(|e| e.to_string())?;
+    fs::write(&path, &json).map_err(|e| e.to_string())?;
     s.path = Some(path.clone());
     s.dirty = false;
     let view = s.view_state.clone();
@@ -140,8 +144,8 @@ pub fn load_puzzle<R: Runtime>(
     app: AppHandle<R>,
     state: State<Mutex<AppState>>,
 ) -> Result<Puzzle, String> {
-    let json = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let envelope: SaveEnvelope = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+    let json = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let envelope: SaveEnvelope = from_str(&json).map_err(|e| e.to_string())?;
     if envelope.version != SAVE_VERSION {
         return Err(format!("unsupported version: {}", envelope.version));
     }
@@ -159,9 +163,7 @@ pub fn load_puzzle<R: Runtime>(
 #[tauri::command]
 #[allow(clippy::needless_pass_by_value)]
 pub fn get_doc_state(state: State<Mutex<AppState>>) -> DocState {
-    let s = state
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let s = state.lock().unwrap_or_else(PoisonError::into_inner);
     DocState {
         dirty: s.dirty,
         path: s.path.clone(),
@@ -181,7 +183,7 @@ pub fn get_puzzle(state: State<Mutex<AppState>>) -> Option<Puzzle> {
 pub fn get_view_state(state: State<Mutex<AppState>>) -> ViewState {
     state
         .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .unwrap_or_else(PoisonError::into_inner)
         .view_state
         .clone()
 }
@@ -241,7 +243,7 @@ pub fn add_region(cells: Vec<Cell>, state: State<Mutex<AppState>>) -> Result<Puz
     } else {
         Operation::new(Operator::Add, 0)
     };
-    let cage = mathdoku::Cage::new(poly, operation);
+    let cage = Cage::new(poly, operation);
     let new_puzzle = puzzle.insert_cage(cage).map_err(|e| e.to_string())?;
     s.puzzle = Some(new_puzzle.clone());
     s.dirty = true;
@@ -261,13 +263,13 @@ pub fn add_region(cells: Vec<Cell>, state: State<Mutex<AppState>>) -> Result<Puz
 pub fn remove_region(cells: Vec<Cell>, state: State<Mutex<AppState>>) -> Result<Puzzle, String> {
     let mut s = state.lock().map_err(|e| e.to_string())?;
     let puzzle = s.puzzle.as_ref().ok_or("no puzzle loaded")?;
-    let target_cells: std::collections::HashSet<_> = cells.iter().copied().collect();
+    let target_cells: HashSet<_> = cells.iter().copied().collect();
     // Rebuild the puzzle without the matching cage.
     let n = puzzle.n();
-    let remaining_cages: Vec<mathdoku::Cage> = puzzle
+    let remaining_cages: Vec<Cage> = puzzle
         .cages()
         .filter(|cage| {
-            let cage_cells: std::collections::HashSet<_> = cage.cells().into_iter().collect();
+            let cage_cells: HashSet<_> = cage.cells().into_iter().collect();
             cage_cells != target_cells
         })
         .cloned()

@@ -6,6 +6,12 @@
 //! arithmetic constraint and the all-different rule within each shared row and
 //! column of the polyomino.
 
+use std::cmp::Ordering;
+use std::collections::HashMap;
+use std::fmt::{self, Display, Formatter};
+use std::iter::{empty, once};
+
+use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 
 use crate::arithmetic::{
@@ -13,9 +19,6 @@ use crate::arithmetic::{
 };
 use crate::polyomino::Polyomino;
 use crate::{Cell, M, N};
-use itertools::Itertools;
-use std::collections::HashMap;
-use std::fmt::{Display, Formatter};
 
 /// A polyomino with an [`Operation`] constraining its cell values.
 #[derive(Debug, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
@@ -67,9 +70,9 @@ impl Cage {
             Operator::Divide => Box::new(division_multisets(n, target as N)),
             Operator::Given => {
                 if target >= 1 && target <= M::from(n) {
-                    Box::new(std::iter::once(vec![target as N]))
+                    Box::new(once(vec![target as N]))
                 } else {
-                    Box::new(std::iter::empty())
+                    Box::new(empty())
                 }
             }
         };
@@ -83,13 +86,13 @@ impl Cage {
 }
 
 impl Ord for Cage {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+    fn cmp(&self, other: &Self) -> Ordering {
         self.polyomino.cmp(&other.polyomino)
     }
 }
 
 impl PartialOrd for Cage {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
@@ -109,7 +112,7 @@ impl Operation {
 }
 
 impl Display for Operation {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "{}{}", self.operator, self.target)
     }
 }
@@ -130,7 +133,7 @@ pub enum Operator {
 }
 
 impl Display for Operator {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let s = match self {
             Self::Add => "+",
             Self::Subtract => "-",

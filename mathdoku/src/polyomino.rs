@@ -1,8 +1,9 @@
 //! A [`Polyomino`]: a contiguous, edge-connected region of grid cells.
 
+use std::collections::{BTreeMap, BTreeSet, HashSet};
+
 use serde::de::Error as DeError;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use std::collections::BTreeSet;
 
 use crate::{Cell, Error};
 
@@ -66,8 +67,7 @@ impl Polyomino {
     /// The cells grouped by column, in column-major order. Each inner vec is sorted by row.
     #[must_use]
     pub fn columns(&self) -> Vec<Vec<Cell>> {
-        let mut cols: std::collections::BTreeMap<usize, Vec<Cell>> =
-            std::collections::BTreeMap::new();
+        let mut cols: BTreeMap<usize, Vec<Cell>> = BTreeMap::new();
         for &cell in &self.0 {
             cols.entry(cell.column).or_default().push(cell);
         }
@@ -95,7 +95,7 @@ fn is_edge_connected_component(cells: &BTreeSet<Cell>) -> bool {
     let Some(&start) = cells.first() else {
         return true;
     };
-    let mut visited = std::collections::HashSet::new();
+    let mut visited = HashSet::new();
     let mut stack = vec![start];
     while let Some(cell) = stack.pop() {
         if visited.insert(cell) {
@@ -125,6 +125,8 @@ impl<'de> Deserialize<'de> for Polyomino {
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
+    use serde_json::{from_str, to_string};
+
     use super::*;
     use crate::test_utils::{
         c00, c01, c02, c10, c11, cells, col_pair, l_shape, pair, row3, singleton,
@@ -377,22 +379,19 @@ mod tests {
     #[test]
     fn polyomino_round_trips_through_json() {
         let p = l_shape();
-        let json = serde_json::to_string(&p).unwrap();
-        let restored: Polyomino = serde_json::from_str(&json).unwrap();
+        let json = to_string(&p).unwrap();
+        let restored: Polyomino = from_str(&json).unwrap();
         assert_eq!(p, restored);
     }
 
     #[test]
     fn polyomino_deserialize_empty_returns_err() {
-        assert!(serde_json::from_str::<Polyomino>("[]").is_err());
+        assert!(from_str::<Polyomino>("[]").is_err());
     }
 
     #[test]
     fn polyomino_deserialize_disconnected_returns_err() {
         // (0,0) and (1,1) are diagonal only — not edge-connected.
-        assert!(
-            serde_json::from_str::<Polyomino>(r#"[{"row":0,"column":0},{"row":1,"column":1}]"#)
-                .is_err()
-        );
+        assert!(from_str::<Polyomino>(r#"[{"row":0,"column":0},{"row":1,"column":1}]"#).is_err());
     }
 }

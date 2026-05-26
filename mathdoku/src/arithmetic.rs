@@ -1,3 +1,5 @@
+use std::iter::once;
+
 use crate::Error;
 use crate::cell::{M, N};
 
@@ -60,7 +62,7 @@ fn simplex_multisets_inner(
     s: u64,
 ) -> Box<dyn Iterator<Item = Tuple>> {
     if remaining == 0 {
-        return Box::new(std::iter::once(vec![]));
+        return Box::new(once(vec![]));
     }
     Box::new(
         simplex_multisets_inner(n, total_size, remaining - 1, f, s).flat_map(move |t| {
