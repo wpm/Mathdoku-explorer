@@ -2,8 +2,10 @@
 //! frontend (`src`). Keeping them here avoids duplicating serde definitions
 //! and ensures both sides agree on a serialization format over the IPC bridge.
 
+use serde::{Deserialize, Serialize};
+
 /// Which interaction mode the puzzle editor is in.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Mode {
     #[default]
@@ -12,7 +14,7 @@ pub enum Mode {
 }
 
 /// Persisted editor view state: which mode is active and where the selection is.
-#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct ViewState {
     pub mode: Mode,
     pub cell_row: usize,
@@ -21,7 +23,7 @@ pub struct ViewState {
 }
 
 /// Document state returned by `get_doc_state`.
-#[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct DocState {
     pub dirty: bool,
     pub path: Option<String>,

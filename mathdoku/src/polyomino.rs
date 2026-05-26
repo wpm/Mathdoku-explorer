@@ -1,5 +1,7 @@
 //! A [`Polyomino`]: a contiguous, edge-connected region of grid cells.
 
+use serde::de::Error as DeError;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::BTreeSet;
 
 use crate::{Cell, Error};
@@ -107,16 +109,16 @@ fn is_edge_connected_component(cells: &BTreeSet<Cell>) -> bool {
     visited.len() == cells.len()
 }
 
-impl serde::Serialize for Polyomino {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+impl Serialize for Polyomino {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         s.collect_seq(self.0.iter())
     }
 }
 
-impl<'de> serde::Deserialize<'de> for Polyomino {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+impl<'de> Deserialize<'de> for Polyomino {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let cells = Vec::<Cell>::deserialize(d)?;
-        Self::from_cells(&cells).map_err(serde::de::Error::custom)
+        Self::from_cells(&cells).map_err(DeError::custom)
     }
 }
 

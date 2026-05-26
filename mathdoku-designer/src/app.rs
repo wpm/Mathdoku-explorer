@@ -9,6 +9,7 @@
 use leptos::prelude::*;
 use mathdoku::Puzzle;
 use mathdoku_designer_shared::{DocState, ViewState};
+use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 use crate::theme::{ACCENT, BG, INK, INK2, LINE, SANS as SANS_FONT};
@@ -23,12 +24,12 @@ extern "C" {
     async fn listen(event: &str, handler: &js_sys::Function) -> JsValue;
 }
 
-#[derive(serde::Serialize)]
+#[derive(Serialize)]
 struct NewPuzzleArgs {
     n: usize,
 }
 
-#[derive(serde::Serialize)]
+#[derive(Serialize)]
 struct PathArgs {
     path: String,
 }
@@ -509,7 +510,7 @@ pub fn App() -> impl IntoView {
             .map(|p| basename(&p).to_owned())
             .unwrap_or_default();
         leptos::task::spawn_local(async move {
-            #[derive(serde::Serialize)]
+            #[derive(Serialize)]
             struct TitleArgs {
                 title: String,
             }

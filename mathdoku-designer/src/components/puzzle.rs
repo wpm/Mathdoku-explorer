@@ -29,6 +29,7 @@
 use leptos::prelude::*;
 use mathdoku::Puzzle as KenkenPuzzle;
 use mathdoku_designer_shared::{Mode, ViewState};
+use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
 use super::cage::Cage;
@@ -331,7 +332,7 @@ pub fn Puzzle(
 
     // Persist view state whenever mode/cell/slot changes.
     Effect::new(move |_| {
-        #[derive(serde::Serialize)]
+        #[derive(Serialize)]
         struct Args {
             view: ViewState,
         }
@@ -471,12 +472,12 @@ pub fn Puzzle(
                     }
                     "Enter" => {
                         ev.prevent_default();
-                        #[derive(serde::Serialize)]
+                        #[derive(Serialize)]
                         struct CellArg {
                             row: usize,
                             column: usize,
                         }
-                        #[derive(serde::Serialize)]
+                        #[derive(Serialize)]
                         struct AddRegionArgs {
                             cells: Vec<CellArg>,
                         }

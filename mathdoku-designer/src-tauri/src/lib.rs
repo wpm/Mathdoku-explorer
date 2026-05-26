@@ -2,6 +2,8 @@ pub mod commands;
 
 use std::sync::Mutex;
 
+use serde::Serialize;
+
 use mathdoku::Puzzle;
 use tauri::image::Image;
 use tauri::menu::{AboutMetadata, Menu, MenuItemBuilder, PredefinedMenuItem, Submenu};
@@ -214,7 +216,7 @@ mod tests {
             .unwrap()
     }
 
-    #[derive(serde::Serialize)]
+    #[derive(Serialize)]
     struct RecentRecord {
         path: Option<String>,
     }

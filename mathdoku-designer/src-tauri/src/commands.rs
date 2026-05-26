@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+use serde::{Deserialize, Serialize};
+
 use mathdoku::Puzzle;
 use mathdoku::{Cell, Operation, Operator, Polyomino};
 use mathdoku_designer_shared::{DocState, ViewState};
@@ -17,13 +19,13 @@ pub struct AppState {
     pub view_state: ViewState,
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct SaveEnvelope {
     pub version: u32,
     pub puzzle: Puzzle,
 }
 
-#[derive(serde::Serialize)]
+#[derive(Serialize)]
 pub struct SaveResult {
     pub path: String,
 }
@@ -35,7 +37,7 @@ pub fn recent_path<R: Runtime>(app: &AppHandle<R>) -> Option<PathBuf> {
 }
 
 pub fn write_recent<R: Runtime>(app: &AppHandle<R>, path: Option<&str>, view: &ViewState) {
-    #[derive(serde::Serialize)]
+    #[derive(Serialize)]
     struct Record<'a> {
         path: Option<&'a str>,
         view: &'a ViewState,
@@ -59,7 +61,7 @@ pub fn write_recent<R: Runtime>(app: &AppHandle<R>, path: Option<&str>, view: &V
     }
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Deserialize)]
 pub struct RecentRecord {
     pub path: Option<String>,
     #[serde(default)]

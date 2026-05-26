@@ -1,14 +1,17 @@
 //! The [`Puzzle`] type: an `n×n` grid with cage constraints.
 
+use serde::de::Error as DeError;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::collections::BTreeSet;
+
 use crate::Error::InvalidGridSize;
 use crate::arithmetic::Tuple;
 use crate::cage::Cage;
 use crate::{Cell, Error, N, Values};
-use std::collections::BTreeSet;
 
 // Serde wire format: flat struct with an n×n `values` array of cell domains.
 // `values` is optional on deserialization; absent means full domains for all cells.
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct PuzzleWire {
     n: usize,
     #[serde(default)]
@@ -207,8 +210,8 @@ impl Puzzle {
     }
 }
 
-impl serde::Serialize for Puzzle {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+impl Serialize for Puzzle {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         let rows: Vec<Vec<Values>> = (0..self.n)
             .map(|r| (0..self.n).map(|c| self.values[r * self.n + c]).collect())
             .collect();
@@ -221,26 +224,26 @@ impl serde::Serialize for Puzzle {
     }
 }
 
-impl<'de> serde::Deserialize<'de> for Puzzle {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+impl<'de> Deserialize<'de> for Puzzle {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let wire = PuzzleWire::deserialize(d)?;
         let n = wire.n;
         if !(1..=9).contains(&n) {
-            return Err(serde::de::Error::custom(format!("invalid grid size {n}")));
+            return Err(DeError::custom(format!("invalid grid size {n}")));
         }
         let values: Box<[Values]> = if wire.values.is_empty() {
             // Absent values field: initialize all cells to the full domain {1..=n}.
             vec![Values::all(n); n * n].into_boxed_slice()
         } else {
             if wire.values.len() != n {
-                return Err(serde::de::Error::custom(format!(
+                return Err(DeError::custom(format!(
                     "expected {n} rows of values, got {}",
                     wire.values.len()
                 )));
             }
             for (r, row) in wire.values.iter().enumerate() {
                 if row.len() != n {
-                    return Err(serde::de::Error::custom(format!(
+                    return Err(DeError::custom(format!(
                         "row {r}: expected {n} columns, got {}",
                         row.len()
                     )));

@@ -1,5 +1,7 @@
 //! The primitive grid types: [`Cell`], [`Values`], and numeric types.
 
+use serde::de::Error as DeError;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::{
     fmt,
     ops::{BitAnd, BitOr},
@@ -13,9 +15,7 @@ pub type M = u16;
 
 /// A cell in a Mathdoku grid, identified by 0-based row and column index values
 /// in row-major order.
-#[derive(
-    Ord, Eq, PartialEq, PartialOrd, Debug, Copy, Clone, Hash, serde::Serialize, serde::Deserialize,
-)]
+#[derive(Ord, Eq, PartialEq, PartialOrd, Debug, Copy, Clone, Hash, Serialize, Deserialize)]
 pub struct Cell {
     /// 0-based row index.
     pub row: usize,
@@ -119,18 +119,18 @@ impl BitOr for Values {
     }
 }
 
-impl serde::Serialize for Values {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+impl Serialize for Values {
+    fn serialize<S: Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         s.collect_seq(self.values())
     }
 }
 
-impl<'de> serde::Deserialize<'de> for Values {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+impl<'de> Deserialize<'de> for Values {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let values = Vec::<N>::deserialize(d)?;
         for &v in &values {
             if !(1..=9).contains(&v) {
-                return Err(serde::de::Error::custom(fmt::format(format_args!(
+                return Err(DeError::custom(fmt::format(format_args!(
                     "Domain value {v} is out of range 1..=9"
                 ))));
             }
