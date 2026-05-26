@@ -62,7 +62,7 @@ pub fn SolutionCount() -> impl IntoView {
                 .get()
                 .map(|n| view! { <div class="solution-count">{pluralize_solutions(n)}</div> })
         } else {
-            // Still solving — show busy indicator only if puzzle is complete.
+            // Still solving — show busy indicator only if the puzzle is complete.
             // We don't yet know, so show "…" and let it resolve momentarily.
             Some(view! { <div class="solution-count">{"…".to_owned()}</div> })
         }

@@ -1,8 +1,8 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use mathdoku::{Cell, Operation, Operator, Polyomino};
 use mathdoku::puzzle::Puzzle;
+use mathdoku::{Cell, Operation, Operator, Polyomino};
 use mathdoku_designer_shared::{DocState, ViewState};
 use tauri::{AppHandle, Manager, Runtime, State};
 
@@ -238,7 +238,7 @@ pub fn add_region(cells: Vec<Cell>, state: State<Mutex<AppState>>) -> Result<Puz
         Operation::new(Operator::Add, 0)
     };
     let cage = mathdoku::Cage::new(poly, operation);
-    let new_puzzle = puzzle.insert_cage(cage);
+    let new_puzzle = puzzle.insert_cage(cage)?;
     s.puzzle = Some(new_puzzle.clone());
     s.dirty = true;
     Ok(new_puzzle)
@@ -272,9 +272,9 @@ pub fn remove_region(cells: Vec<Cell>, state: State<Mutex<AppState>>) -> Result<
     }
     let new_puzzle = remaining_cages
         .into_iter()
-        .fold(Puzzle::new(n).map_err(|e| e.to_string())?, |p, cage| {
+        .try_fold(Puzzle::new(n).map_err(|e| e.to_string())?, |p, cage| {
             p.insert_cage(cage)
-        });
+        })?;
     s.puzzle = Some(new_puzzle.clone());
     s.dirty = true;
     Ok(new_puzzle)

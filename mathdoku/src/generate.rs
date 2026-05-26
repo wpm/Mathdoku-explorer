@@ -156,7 +156,7 @@ where
             .collect();
         let operation = op(&values, n)?;
         let cage = Cage::new(polyomino, operation);
-        puzzle = puzzle.insert_cage(cage);
+        puzzle = puzzle.insert_cage(cage)?;
     }
     Ok(puzzle)
 }
