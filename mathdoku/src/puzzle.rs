@@ -168,7 +168,7 @@ impl Puzzle {
     /// # Errors
     /// Returns [`Error::InvalidCell`] if `cell` is outside the grid.
     pub(crate) fn set_cell_value(&self, cell: Cell, n: N) -> Result<Self, Error> {
-        self.set_domain(cell, Values::new(&[n]))
+        self.set_domain(cell, Values::singleton(n))
     }
 
     /// Returns a new puzzle with `cell`'s domain replaced by `values`.
@@ -351,7 +351,7 @@ mod tests {
         let p = Puzzle::new(4).unwrap();
         let cell = Cell::new(1, 2);
         let p2 = p.set_cell_value(cell, 3).unwrap();
-        assert_eq!(p2.cell_values(cell).unwrap(), Values::new(&[3]));
+        assert_eq!(p2.cell_values(cell).unwrap(), Values::new(&[3]).unwrap());
     }
 
     #[test]
@@ -416,10 +416,22 @@ mod tests {
     #[test]
     fn constrain_given_cages_pin_all_cells() {
         let fp = solved_2x2().constrain().unwrap();
-        assert_eq!(fp.cell_values(Cell::new(0, 0)).unwrap(), Values::new(&[1]));
-        assert_eq!(fp.cell_values(Cell::new(0, 1)).unwrap(), Values::new(&[2]));
-        assert_eq!(fp.cell_values(Cell::new(1, 0)).unwrap(), Values::new(&[2]));
-        assert_eq!(fp.cell_values(Cell::new(1, 1)).unwrap(), Values::new(&[1]));
+        assert_eq!(
+            fp.cell_values(Cell::new(0, 0)).unwrap(),
+            Values::new(&[1]).unwrap()
+        );
+        assert_eq!(
+            fp.cell_values(Cell::new(0, 1)).unwrap(),
+            Values::new(&[2]).unwrap()
+        );
+        assert_eq!(
+            fp.cell_values(Cell::new(1, 0)).unwrap(),
+            Values::new(&[2]).unwrap()
+        );
+        assert_eq!(
+            fp.cell_values(Cell::new(1, 1)).unwrap(),
+            Values::new(&[1]).unwrap()
+        );
     }
 
     #[test]
@@ -454,7 +466,7 @@ mod tests {
             .insert_cage(cage_at(&[(1, 0), (1, 1)], Operator::Divide, 2))
             .unwrap();
         let fp = p.constrain().unwrap();
-        let expected = Values::new(&[1, 2]);
+        let expected = Values::new(&[1, 2]).unwrap();
         for r in 0..2 {
             for c in 0..2 {
                 assert_eq!(
@@ -491,10 +503,22 @@ mod tests {
         let solutions: Vec<Puzzle> = solved_2x2().solutions().map(Result::unwrap).collect();
         assert_eq!(solutions.len(), 1);
         let sol = &solutions[0];
-        assert_eq!(sol.cell_values(Cell::new(0, 0)).unwrap(), Values::new(&[1]));
-        assert_eq!(sol.cell_values(Cell::new(0, 1)).unwrap(), Values::new(&[2]));
-        assert_eq!(sol.cell_values(Cell::new(1, 0)).unwrap(), Values::new(&[2]));
-        assert_eq!(sol.cell_values(Cell::new(1, 1)).unwrap(), Values::new(&[1]));
+        assert_eq!(
+            sol.cell_values(Cell::new(0, 0)).unwrap(),
+            Values::new(&[1]).unwrap()
+        );
+        assert_eq!(
+            sol.cell_values(Cell::new(0, 1)).unwrap(),
+            Values::new(&[2]).unwrap()
+        );
+        assert_eq!(
+            sol.cell_values(Cell::new(1, 0)).unwrap(),
+            Values::new(&[2]).unwrap()
+        );
+        assert_eq!(
+            sol.cell_values(Cell::new(1, 1)).unwrap(),
+            Values::new(&[1]).unwrap()
+        );
     }
 
     // A 2×2 puzzle with an impossible constraint (Add target=0 is unreachable) yields no solutions.
@@ -525,10 +549,22 @@ mod tests {
         let solutions: Vec<Puzzle> = p.solutions().map(Result::unwrap).collect();
         assert_eq!(solutions.len(), 1);
         let sol = &solutions[0];
-        assert_eq!(sol.cell_values(Cell::new(0, 0)).unwrap(), Values::new(&[1]));
-        assert_eq!(sol.cell_values(Cell::new(0, 1)).unwrap(), Values::new(&[2]));
-        assert_eq!(sol.cell_values(Cell::new(1, 0)).unwrap(), Values::new(&[2]));
-        assert_eq!(sol.cell_values(Cell::new(1, 1)).unwrap(), Values::new(&[1]));
+        assert_eq!(
+            sol.cell_values(Cell::new(0, 0)).unwrap(),
+            Values::new(&[1]).unwrap()
+        );
+        assert_eq!(
+            sol.cell_values(Cell::new(0, 1)).unwrap(),
+            Values::new(&[2]).unwrap()
+        );
+        assert_eq!(
+            sol.cell_values(Cell::new(1, 0)).unwrap(),
+            Values::new(&[2]).unwrap()
+        );
+        assert_eq!(
+            sol.cell_values(Cell::new(1, 1)).unwrap(),
+            Values::new(&[1]).unwrap()
+        );
     }
 
     // A 3×3 puzzle with three row-sum cages (each row sums to 6).

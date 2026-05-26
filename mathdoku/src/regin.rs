@@ -111,7 +111,9 @@ pub fn regin_gac(domains: &[Values]) -> Vec<Values> {
             .filter(|&&vi| matched == Some(vi) || scc[var] == scc[n + vi] || reachable[n + vi])
             .map(|&vi| all_values[vi])
             .collect();
-        result[var] = Values::new(&vals);
+        result[var] = vals
+            .iter()
+            .fold(Values::default(), |acc, &v| acc | Values::singleton(v));
     }
     result
 }
@@ -223,7 +225,7 @@ mod tests {
         ) {
             if i == domains.len() {
                 for (slot, &value) in support.iter_mut().zip(current.iter()) {
-                    *slot = *slot | Values::new(&[value]);
+                    *slot = *slot | Values::new(&[value]).unwrap();
                 }
                 return;
             }
@@ -253,9 +255,9 @@ mod tests {
     #[test]
     fn regin_prunes_forced_chain() {
         let domains = vec![
-            Values::new(&[1, 2]),
-            Values::new(&[2]),
-            Values::new(&[1, 3]),
+            Values::new(&[1, 2]).unwrap(),
+            Values::new(&[2]).unwrap(),
+            Values::new(&[1, 3]).unwrap(),
         ];
         assert_eq!(
             sorted(&regin_gac(&domains)),
@@ -265,7 +267,7 @@ mod tests {
 
     #[test]
     fn regin_infeasible_empties_all() {
-        let domains = vec![Values::new(&[1]), Values::new(&[1])];
+        let domains = vec![Values::new(&[1]).unwrap(), Values::new(&[1]).unwrap()];
         assert_eq!(
             regin_gac(&domains),
             vec![Values::default(), Values::default()]
@@ -276,7 +278,7 @@ mod tests {
     fn regin_keeps_free_value() {
         // One variable, two domain values: full Régin keeps both.
         assert_eq!(
-            sorted(&regin_gac(&[Values::new(&[1, 2])])),
+            sorted(&regin_gac(&[Values::new(&[1, 2]).unwrap()])),
             vec![vec![1, 2]]
         );
     }
@@ -285,7 +287,10 @@ mod tests {
     fn brute_force_matches_known_cases() {
         assert!(brute_force_gac(&[]).is_empty());
         assert_eq!(
-            sorted(&brute_force_gac(&[Values::new(&[1, 2]), Values::new(&[2])])),
+            sorted(&brute_force_gac(&[
+                Values::new(&[1, 2]).unwrap(),
+                Values::new(&[2]).unwrap()
+            ])),
             vec![vec![1], vec![2]]
         );
     }
@@ -299,7 +304,7 @@ mod tests {
                     let mut fill = Values::default();
                     for value in 1..=n_values {
                         if rng.random_range(0u8..2) == 1 {
-                            fill = fill | Values::new(&[value]);
+                            fill = fill | Values::new(&[value]).unwrap();
                         }
                     }
                     if !fill.is_empty() {

@@ -169,7 +169,7 @@ impl Constraint<Puzzle, PuzzleCell, Error> for Cage {
                 .all(|(&v, domain)| domain.contains(v))
             {
                 for (i, &v) in tuple.iter().enumerate() {
-                    new_domains[i] = new_domains[i] | Values::new(&[v]);
+                    new_domains[i] = new_domains[i] | Values::singleton(v);
                 }
             }
         }
@@ -272,7 +272,9 @@ mod tests {
             .unwrap();
         let mut p = Puzzle::new(n).unwrap();
         for ((r, c), vals) in domains {
-            p = p.set_domain(Cell::new(*r, *c), Values::new(vals)).unwrap();
+            p = p
+                .set_domain(Cell::new(*r, *c), Values::new(vals).unwrap())
+                .unwrap();
         }
         p
     }
@@ -321,15 +323,15 @@ mod tests {
             .unwrap();
         assert_eq!(
             new_p.cell_values(Cell::new(0, 0)).unwrap(),
-            Values::new(&[1])
+            Values::new(&[1]).unwrap()
         );
         assert_eq!(
             new_p.cell_values(Cell::new(0, 1)).unwrap(),
-            Values::new(&[2])
+            Values::new(&[2]).unwrap()
         );
         assert_eq!(
             new_p.cell_values(Cell::new(0, 2)).unwrap(),
-            Values::new(&[3])
+            Values::new(&[3]).unwrap()
         );
         let cells = changed_cells(&changed);
         assert_eq!(cells.len(), 2);
@@ -361,11 +363,11 @@ mod tests {
         let (new_p, _) = AllDifferent::column(3, 1).propagate(&p).unwrap();
         assert_eq!(
             new_p.cell_values(Cell::new(1, 1)).unwrap(),
-            Values::new(&[2])
+            Values::new(&[2]).unwrap()
         );
         assert_eq!(
             new_p.cell_values(Cell::new(2, 1)).unwrap(),
-            Values::new(&[3])
+            Values::new(&[3]).unwrap()
         );
     }
 
@@ -394,7 +396,7 @@ mod tests {
         let (new_p, changed) = c.propagate(&p).unwrap();
         assert_eq!(
             new_p.cell_values(Cell::new(0, 0)).unwrap(),
-            Values::new(&[3])
+            Values::new(&[3]).unwrap()
         );
         assert_eq!(changed_cells(&changed), vec![Cell::new(0, 0)]);
     }
@@ -408,11 +410,11 @@ mod tests {
         let (new_p, _) = c.propagate(&p).unwrap();
         assert_eq!(
             new_p.cell_values(Cell::new(0, 0)).unwrap(),
-            Values::new(&[1, 2])
+            Values::new(&[1, 2]).unwrap()
         );
         assert_eq!(
             new_p.cell_values(Cell::new(0, 1)).unwrap(),
-            Values::new(&[1, 2])
+            Values::new(&[1, 2]).unwrap()
         );
     }
 
@@ -436,17 +438,17 @@ mod tests {
         // So (0,0) is pruned to {3,4} and (0,1) stays {1,2}.
         let p = Puzzle::new(4)
             .unwrap()
-            .set_domain(Cell::new(0, 1), Values::new(&[1, 2]))
+            .set_domain(Cell::new(0, 1), Values::new(&[1, 2]).unwrap())
             .unwrap();
         let c = cage(&[(0, 0), (0, 1)], crate::cage::Operator::Add, 5);
         let (new_p, _) = c.propagate(&p).unwrap();
         assert_eq!(
             new_p.cell_values(Cell::new(0, 0)).unwrap(),
-            Values::new(&[3, 4])
+            Values::new(&[3, 4]).unwrap()
         );
         assert_eq!(
             new_p.cell_values(Cell::new(0, 1)).unwrap(),
-            Values::new(&[1, 2])
+            Values::new(&[1, 2]).unwrap()
         );
     }
 }

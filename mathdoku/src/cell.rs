@@ -7,6 +7,8 @@ use std::{
     ops::{BitAnd, BitOr},
 };
 
+use crate::Error;
+
 /// Possible cell value: a number in the range `1..=9`.
 pub type N = u8;
 /// A cage target (sum, product, difference, ratio, or given value). Wide enough
@@ -53,17 +55,31 @@ pub struct Values(u16);
 
 impl Values {
     /// Creates a `Values` set from a slice of numbers in the range `1..=9`.
-    #[must_use]
-    pub fn new(ns: &[N]) -> Self {
-        Self(ns.iter().fold(0u16, |acc, &n| acc | (1u16 << u32::from(n))))
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidValue`] if any value is not in `1..=9`.
+    pub fn new(ns: &[N]) -> Result<Self, Error> {
+        for &n in ns {
+            if !(1..=9).contains(&n) {
+                return Err(Error::InvalidValue(n));
+            }
+        }
+        Ok(Self(
+            ns.iter().fold(0u16, |acc, &n| acc | (1u16 << u32::from(n))),
+        ))
     }
 
     /// Returns the full set `{1, ..., n}`.
     #[must_use]
     #[allow(clippy::cast_possible_truncation)]
     pub fn all(n: usize) -> Self {
-        let ns: Vec<N> = (1..=(n as N)).collect();
-        Self::new(&ns)
+        Self((1..=(n as N)).fold(0u16, |acc, n| acc | (1u16 << u32::from(n))))
+    }
+
+    /// Creates a `Values` set from a single value, bypassing validation.
+    /// Callers must guarantee `n` is in `1..=9`.
+    pub(crate) fn singleton(n: N) -> Self {
+        Self(1u16 << u32::from(n))
     }
 
     /// Returns the values in ascending order.
@@ -128,14 +144,7 @@ impl Serialize for Values {
 impl<'de> Deserialize<'de> for Values {
     fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let values = Vec::<N>::deserialize(d)?;
-        for &v in &values {
-            if !(1..=9).contains(&v) {
-                return Err(DeError::custom(fmt::format(format_args!(
-                    "Domain value {v} is out of range 1..=9"
-                ))));
-            }
-        }
-        Ok(Self::new(&values))
+        Self::new(&values).map_err(|e| DeError::custom(fmt::format(format_args!("{e}"))))
     }
 }
 
@@ -148,17 +157,20 @@ mod tests {
 
     #[test]
     fn default_values_is_empty() {
-        assert_eq!(Values::default(), Values::new(&[]));
+        assert_eq!(Values::default(), Values::new(&[]).unwrap());
     }
 
     #[test]
     fn new_contains_one_through_four() {
-        assert_eq!(Values::new(&[1, 2, 3, 4]), Values::new(&[1, 2, 3, 4]));
+        assert_eq!(
+            Values::new(&[1, 2, 3, 4]).unwrap(),
+            Values::new(&[1, 2, 3, 4]).unwrap()
+        );
     }
 
     #[test]
     fn new_single_value() {
-        assert_eq!(Values::new(&[1]), Values::new(&[1]));
+        assert_eq!(Values::new(&[1]).unwrap(), Values::new(&[1]).unwrap());
     }
 
     #[test]
@@ -168,21 +180,31 @@ mod tests {
 
     #[test]
     fn full_contains_one_through_n() {
-        assert_eq!(Values::all(4), Values::new(&[1, 2, 3, 4]));
+        assert_eq!(Values::all(4), Values::new(&[1, 2, 3, 4]).unwrap());
+    }
+
+    #[test]
+    fn new_rejects_zero() {
+        assert!(matches!(Values::new(&[0]), Err(Error::InvalidValue(0))));
+    }
+
+    #[test]
+    fn new_rejects_ten() {
+        assert!(matches!(Values::new(&[10]), Err(Error::InvalidValue(10))));
     }
 
     #[test]
     fn bitand_intersection() {
         assert_eq!(
-            Values::new(&[1, 2, 3]) & Values::new(&[2, 3, 4]),
-            Values::new(&[2, 3])
+            Values::new(&[1, 2, 3]).unwrap() & Values::new(&[2, 3, 4]).unwrap(),
+            Values::new(&[2, 3]).unwrap()
         );
     }
 
     #[test]
     fn bitand_disjoint_is_empty() {
         assert_eq!(
-            Values::new(&[1, 2]) & Values::new(&[3, 4]),
+            Values::new(&[1, 2]).unwrap() & Values::new(&[3, 4]).unwrap(),
             Values::default()
         );
     }
@@ -194,9 +216,9 @@ mod tests {
 
     #[test]
     fn is_singleton_true_for_single_value() {
-        assert!(Values::new(&[1]).is_singleton());
-        assert!(Values::new(&[5]).is_singleton());
-        assert!(Values::new(&[9]).is_singleton());
+        assert!(Values::new(&[1]).unwrap().is_singleton());
+        assert!(Values::new(&[5]).unwrap().is_singleton());
+        assert!(Values::new(&[9]).unwrap().is_singleton());
     }
 
     #[test]
@@ -206,7 +228,7 @@ mod tests {
 
     #[test]
     fn is_singleton_false_for_multiple_values() {
-        assert!(!Values::new(&[1, 2]).is_singleton());
+        assert!(!Values::new(&[1, 2]).unwrap().is_singleton());
         assert!(!Values::all(4).is_singleton());
     }
 
@@ -217,31 +239,31 @@ mod tests {
 
     #[test]
     fn is_empty_false_for_non_empty() {
-        assert!(!Values::new(&[1]).is_empty());
+        assert!(!Values::new(&[1]).unwrap().is_empty());
         assert!(!Values::all(9).is_empty());
     }
 
     #[test]
     fn len_matches_number_of_values() {
         assert_eq!(Values::default().len(), 0);
-        assert_eq!(Values::new(&[3]).len(), 1);
-        assert_eq!(Values::new(&[1, 5, 9]).len(), 3);
+        assert_eq!(Values::new(&[3]).unwrap().len(), 1);
+        assert_eq!(Values::new(&[1, 5, 9]).unwrap().len(), 3);
         assert_eq!(Values::all(9).len(), 9);
     }
 
     #[test]
     fn bitor_union() {
         assert_eq!(
-            Values::new(&[1, 2]) | Values::new(&[2, 3]),
-            Values::new(&[1, 2, 3])
+            Values::new(&[1, 2]).unwrap() | Values::new(&[2, 3]).unwrap(),
+            Values::new(&[1, 2, 3]).unwrap()
         );
     }
 
     #[test]
     fn bitor_disjoint() {
         assert_eq!(
-            Values::new(&[1, 2]) | Values::new(&[3, 4]),
-            Values::new(&[1, 2, 3, 4])
+            Values::new(&[1, 2]).unwrap() | Values::new(&[3, 4]).unwrap(),
+            Values::new(&[1, 2, 3, 4]).unwrap()
         );
     }
 
@@ -265,7 +287,7 @@ mod tests {
 
     #[test]
     fn values_round_trips_through_json() {
-        let values = Values::new(&[1, 3, 5]);
+        let values = Values::new(&[1, 3, 5]).unwrap();
         let json = to_string(&values).unwrap();
         assert_eq!(json, "[1,3,5]");
         let restored: Values = from_str(&json).unwrap();

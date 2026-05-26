@@ -53,6 +53,8 @@ pub enum Error {
     InvalidCage(Cage),
     /// A tuple index is out of range for the cage. Carries `(index, len)`.
     InvalidTupleIndex(usize, usize),
+    /// A value passed to `Values::new` is outside the valid range `1..=9`.
+    InvalidValue(crate::cell::N),
 }
 
 impl fmt::Display for Error {
@@ -126,6 +128,7 @@ impl fmt::Display for Error {
                 f,
                 "{operator} cannot be applied to a tuple of arity {arity}"
             ),
+            Self::InvalidValue(v) => write!(f, "value {v} is outside the valid range 1..=9"),
         }
     }
 }
@@ -197,6 +200,10 @@ mod tests {
         assert_eq!(
             Error::InvalidTupleIndex(3, 2).to_string(),
             "tuple index 3 is out of range for cage with 2 tuples"
+        );
+        assert_eq!(
+            Error::InvalidValue(10).to_string(),
+            "value 10 is outside the valid range 1..=9"
         );
     }
 }
