@@ -268,6 +268,7 @@ pub fn Puzzle(
     puzzle: KenkenPuzzle,
     initial_view: ViewState,
     on_puzzle_change: Callback<(KenkenPuzzle, ViewState)>,
+    on_error: Callback<String>,
 ) -> impl IntoView {
     let n = puzzle.n();
     let cell = cell_size(n);
@@ -498,6 +499,10 @@ pub fn Puzzle(
                                 serde_wasm_bindgen::to_value(&AddRegionArgs { cells: cells_arg });
                             let Ok(args) = args else { return };
                             let result = invoke("add_region", args).await;
+                            if let Some(e) = result.as_string() {
+                                on_error.run(e);
+                                return;
+                            }
                             let Ok(new_puzzle) =
                                 serde_wasm_bindgen::from_value::<KenkenPuzzle>(result)
                             else {

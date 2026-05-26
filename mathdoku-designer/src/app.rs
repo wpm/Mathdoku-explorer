@@ -38,16 +38,30 @@ async fn get_doc_state() -> DocState {
     serde_wasm_bindgen::from_value(v).unwrap_or_default()
 }
 
-async fn call_new_puzzle(n: usize) -> Option<Puzzle> {
-    let args = serde_wasm_bindgen::to_value(&NewPuzzleArgs { n }).unwrap();
-    let result = invoke("new_puzzle", args).await;
-    serde_wasm_bindgen::from_value(result).ok()
+/// Extracts the error string from a Tauri command result that returned `Err`.
+///
+/// Tauri serializes `Err(String)` as a plain JS string. If the value is not a
+/// string the result was `Ok(T)`, so this returns `None`.
+fn tauri_error(v: &JsValue) -> Option<String> {
+    v.as_string()
 }
 
-async fn call_generate_puzzle(n: usize) -> Option<Puzzle> {
+async fn call_new_puzzle(n: usize) -> Result<Puzzle, String> {
+    let args = serde_wasm_bindgen::to_value(&NewPuzzleArgs { n }).unwrap();
+    let result = invoke("new_puzzle", args).await;
+    if let Some(e) = tauri_error(&result) {
+        return Err(e);
+    }
+    serde_wasm_bindgen::from_value(result).map_err(|e| e.to_string())
+}
+
+async fn call_generate_puzzle(n: usize) -> Result<Puzzle, String> {
     let args = serde_wasm_bindgen::to_value(&NewPuzzleArgs { n }).unwrap();
     let result = invoke("generate_puzzle", args).await;
-    serde_wasm_bindgen::from_value(result).ok()
+    if let Some(e) = tauri_error(&result) {
+        return Err(e);
+    }
+    serde_wasm_bindgen::from_value(result).map_err(|e| e.to_string())
 }
 
 async fn call_save_puzzle() -> Option<String> {
@@ -82,14 +96,22 @@ async fn eval_promise_string(js: &str) -> Option<String> {
         .and_then(|v| v.as_string())
 }
 
-async fn call_load_puzzle() -> Option<Puzzle> {
-    let path = eval_promise_string(
+async fn call_load_puzzle() -> Result<Option<Puzzle>, String> {
+    let Some(path) = eval_promise_string(
         r"window.__TAURI__.dialog.open({ filters: [{ name: 'Mathdoku', extensions: ['mathdoku'] }] })",
     )
-    .await?;
+    .await
+    else {
+        return Ok(None); // user cancelled the dialog
+    };
     let args = serde_wasm_bindgen::to_value(&PathArgs { path }).unwrap();
     let result = invoke("load_puzzle", args).await;
-    serde_wasm_bindgen::from_value(result).ok()
+    if let Some(e) = tauri_error(&result) {
+        return Err(e);
+    }
+    serde_wasm_bindgen::from_value(result)
+        .map(Some)
+        .map_err(|e| e.to_string())
 }
 
 fn basename(path: &str) -> &str {
@@ -335,12 +357,41 @@ fn UnsavedChangesModal(
     }
 }
 
+// ---- ErrorToast ----
+
+#[component]
+fn ErrorToast(message: String, on_dismiss: Callback<()>) -> impl IntoView {
+    let toast_style = format!(
+        "background:{BG};border:0.5px solid {LINE};border-radius:8px;\
+         box-shadow:0 4px 24px rgba(0,0,0,0.2);padding:20px 24px;\
+         font-family:{SANS_FONT};min-width:300px;max-width:480px;"
+    );
+    view! {
+        <div style=overlay_style()>
+            <div style=toast_style>
+                <p style=title_style()>"Error"</p>
+                <p style=body_style()>{message}</p>
+                <div style="display:flex;justify-content:flex-end;">
+                    <button
+                        autofocus=true
+                        style=primary_btn_style()
+                        on:click=move |_| on_dismiss.run(())
+                    >
+                        "OK"
+                    </button>
+                </div>
+            </div>
+        </div>
+    }
+}
+
 // ---- App ----
 
 #[component]
 pub fn App() -> impl IntoView {
     let show_size_modal = RwSignal::new(false);
     let show_unsaved_modal = RwSignal::new(false);
+    let error_msg: RwSignal<Option<String>> = RwSignal::new(None);
     let puzzle = RwSignal::new(None::<Puzzle>);
     let view_state = RwSignal::new(ViewState::default());
     let current_path: RwSignal<Option<String>> = RwSignal::new(None);
@@ -389,11 +440,15 @@ pub fn App() -> impl IntoView {
 
         let load_cb = Closure::wrap(Box::new(move |_: JsValue| {
             leptos::task::spawn_local(async move {
-                if let Some(p) = call_load_puzzle().await {
-                    let ds = get_doc_state().await;
-                    current_path.set(ds.path);
-                    view_state.set(ViewState::default());
-                    puzzle.set(Some(p));
+                match call_load_puzzle().await {
+                    Ok(Some(p)) => {
+                        let ds = get_doc_state().await;
+                        current_path.set(ds.path);
+                        view_state.set(ViewState::default());
+                        puzzle.set(Some(p));
+                    }
+                    Ok(None) => {} // user cancelled dialog
+                    Err(e) => error_msg.set(Some(e)),
                 }
             });
         }) as Box<dyn Fn(JsValue)>);
@@ -410,20 +465,26 @@ pub fn App() -> impl IntoView {
     let on_empty = Callback::new(move |n: usize| {
         show_size_modal.set(false);
         leptos::task::spawn_local(async move {
-            if let Some(p) = call_new_puzzle(n).await {
-                current_path.set(None);
-                view_state.set(ViewState::default());
-                puzzle.set(Some(p));
+            match call_new_puzzle(n).await {
+                Ok(p) => {
+                    current_path.set(None);
+                    view_state.set(ViewState::default());
+                    puzzle.set(Some(p));
+                }
+                Err(e) => error_msg.set(Some(e)),
             }
         });
     });
     let on_random = Callback::new(move |n: usize| {
         show_size_modal.set(false);
         leptos::task::spawn_local(async move {
-            if let Some(p) = call_generate_puzzle(n).await {
-                current_path.set(None);
-                view_state.set(ViewState::default());
-                puzzle.set(Some(p));
+            match call_generate_puzzle(n).await {
+                Ok(p) => {
+                    current_path.set(None);
+                    view_state.set(ViewState::default());
+                    puzzle.set(Some(p));
+                }
+                Err(e) => error_msg.set(Some(e)),
             }
         });
     });
@@ -457,6 +518,8 @@ pub fn App() -> impl IntoView {
         });
     });
 
+    let on_dismiss_error = Callback::new(move |(): ()| error_msg.set(None));
+
     view! {
         <main class="app-main">
             {move || puzzle.get().map(|p| {
@@ -464,7 +527,8 @@ pub fn App() -> impl IntoView {
                 view_state.set(new_view);
                 puzzle.set(Some(new_puzzle));
             });
-            view! { <crate::components::Puzzle puzzle=p initial_view=view_state.get() on_puzzle_change=on_puzzle_change /> }
+            let on_error = Callback::new(move |msg: String| error_msg.set(Some(msg)));
+            view! { <crate::components::Puzzle puzzle=p initial_view=view_state.get() on_puzzle_change=on_puzzle_change on_error=on_error /> }
         })}
             {move || show_size_modal.get().then(|| view! {
                 <SizeModal
@@ -480,6 +544,9 @@ pub fn App() -> impl IntoView {
                     on_discard=on_unsaved_discard
                     on_cancel=on_unsaved_cancel
                 />
+            })}
+            {move || error_msg.get().map(|msg| view! {
+                <ErrorToast message=msg on_dismiss=on_dismiss_error />
             })}
         </main>
     }
