@@ -2,9 +2,7 @@
 
 use leptos::prelude::*;
 
-const INK: &str = "#26221b";
-const SERIF: &str = "'Fraunces', Georgia, serif";
-const OP_INSET: f64 = 4.0;
+use crate::theme::{INK, OP_INSET, SERIF};
 
 /// "?" label rendered at the top-left of the region's anchor cell.
 #[component]

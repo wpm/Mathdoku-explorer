@@ -3,9 +3,7 @@
 use mathdoku::{Operation, Operator};
 use leptos::prelude::*;
 
-const INK: &str = "#26221b";
-const SERIF: &str = "'Fraunces', Georgia, serif";
-const OP_INSET: f64 = 4.0;
+use crate::theme::{INK, OP_INSET, SERIF};
 
 /// Formats a cage operation as a short label: `"+5"`, `"−2"`, `"×12"`, `"÷3"`, or `"7"`.
 pub fn op_label(op: Operation) -> String {

@@ -3,6 +3,7 @@ mod old;
 
 mod app;
 mod components;
+mod theme;
 
 use app::App;
 use leptos::prelude::*;

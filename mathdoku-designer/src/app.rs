@@ -10,13 +10,7 @@ use mathdoku_designer_shared::{DocState, ViewState};
 use leptos::prelude::*;
 use wasm_bindgen::prelude::*;
 
-// ---- theme constants ----
-const BG: &str = "#f4efe6";
-const INK: &str = "#26221b";
-const INK2: &str = "#5c564a";
-const LINE: &str = "#b9ad93";
-const ACCENT: &str = "#1a4e7a";
-const SANS_FONT: &str = "'Inter', system-ui, sans-serif";
+use crate::theme::{ACCENT, BG, INK, INK2, LINE, SANS as SANS_FONT};
 
 // ---- Tauri glue ----
 #[wasm_bindgen]

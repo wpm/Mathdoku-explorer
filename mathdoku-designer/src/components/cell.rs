@@ -8,9 +8,8 @@
 
 use leptos::prelude::*;
 
-const INK: &str = "#26221b";
-const INK3: &str = "#8b8476";
-const SANS: &str = "'Inter', system-ui, sans-serif";
+use crate::theme::{INK, INK3, SANS};
+
 const DOMAIN_EDGE: f64 = 4.0;
 
 // Pip positions as (x, y) fractions in [0,1]² for 1–9 domain values.
