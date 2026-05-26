@@ -47,9 +47,9 @@ impl Cage {
 
     /// Returns all valid ordered value assignments for this cage in an `n`×`n` grid.
     ///
-    /// Each tuple assigns one value from `1..=n` to each cell. Assignments that
-    /// violate the all-different constraint within any shared row or column of the
-    /// polyomino are excluded.
+    /// Each tuple assigns one value from `1..=n` to each cell, in the row-major
+    /// order of [`Cage::cells`]. Assignments that violate the all-different
+    /// constraint within any shared row or column of the polyomino are excluded.
     #[allow(clippy::cast_possible_truncation)]
     pub fn tuples(&self, n: N) -> impl Iterator<Item = Tuple> {
         let k = self.polyomino.len();

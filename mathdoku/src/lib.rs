@@ -38,6 +38,7 @@ mod regin;
 #[cfg(test)]
 mod test_utils;
 
+pub use arithmetic::Tuple;
 pub use cage::{Cage, Operation, Operator};
 pub use cell::{Cell, M, N, Values};
 pub use error::Error;

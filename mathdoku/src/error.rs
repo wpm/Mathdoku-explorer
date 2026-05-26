@@ -48,6 +48,10 @@ pub enum Error {
     EmptyOpPolicyValues,
     /// A fold operation was applied to an empty tuple.
     EmptyTuple,
+    /// The referenced [`Cage`] is not present in the puzzle.
+    InvalidCage(Cage),
+    /// A tuple index is out of range for the cage. Carries `(index, len)`.
+    InvalidTupleIndex(usize, usize),
 }
 
 impl fmt::Display for Error {
@@ -110,6 +114,13 @@ impl fmt::Display for Error {
             Self::EmptyTuple => {
                 write!(f, "tuple operation cannot be applied to an empty tuple")
             }
+            Self::InvalidCage(cage) => write!(f, "cage {cage:?} is not present in the puzzle"),
+            Self::InvalidTupleIndex(index, len) => {
+                write!(
+                    f,
+                    "tuple index {index} is out of range for cage with {len} tuples"
+                )
+            }
             Self::InvalidOperationArity(operator, arity) => write!(
                 f,
                 "{operator} cannot be applied to a tuple of arity {arity}"
@@ -123,6 +134,8 @@ impl std::error::Error for Error {}
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
+    use crate::cage::{Cage, Operation, Operator};
+    use crate::polyomino::Polyomino;
     use crate::{Cell, Error};
 
     #[test]
@@ -172,6 +185,17 @@ mod tests {
         assert_eq!(
             Error::EmptyTuple.to_string(),
             "tuple operation cannot be applied to an empty tuple"
+        );
+        let poly = Polyomino::from_cells(&[Cell::new(0, 0)]).unwrap();
+        let cage = Cage::new(poly, Operation::new(Operator::Given, 1));
+        assert!(
+            Error::InvalidCage(cage)
+                .to_string()
+                .contains("not present in the puzzle")
+        );
+        assert_eq!(
+            Error::InvalidTupleIndex(3, 2).to_string(),
+            "tuple index 3 is out of range for cage with 2 tuples"
         );
     }
 }

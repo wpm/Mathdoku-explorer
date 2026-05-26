@@ -1,6 +1,7 @@
 //! The [`Puzzle`] type: an `n×n` grid with cage constraints.
 
 use crate::Error::InvalidGridSize;
+use crate::arithmetic::Tuple;
 use crate::cage::Cage;
 use crate::{Cell, Error, N, Values};
 use std::collections::BTreeSet;
@@ -18,10 +19,10 @@ struct PuzzleWire {
 
 /// An `n×n` Mathdoku grid.
 ///
-/// Stores one [`Values`] domain per cell and the list of cages that have been added.
-///
-/// Serializes to `{"n": <size>, "values": [[...], ...], "cages": [...]}` where `values`
-/// is an `n×n` array of cell domains in row-major order.
+/// Every `Puzzle` is at a constraint-propagation fixpoint: all cage, row, and
+/// column constraints have been applied as far as they can be inferred. Every
+/// public method that returns a new `Puzzle` upholds this invariant by
+/// propagating to a new fixpoint before returning.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct Puzzle {
     n: usize,
@@ -67,6 +68,46 @@ impl Puzzle {
         self.cages.iter()
     }
 
+    /// Returns all valid ordered value assignments for `cage` in this puzzle.
+    ///
+    /// Each tuple assigns one value from `1..=n` to each cell in the cage, in
+    /// the cage's cell order. Tuples are in lexicographic order.
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidCage`] if `cage` is not present in the puzzle.
+    #[allow(clippy::cast_possible_truncation)] // n is validated to 1..=9 in Puzzle::new
+    pub fn cage_tuples(&self, cage: &Cage) -> Result<Vec<Tuple>, Error> {
+        if !self.cages.contains(cage) {
+            return Err(Error::InvalidCage(cage.clone()));
+        }
+        Ok(cage.tuples(self.n as N).collect())
+    }
+
+    /// Returns a new puzzle with the cells of `cage` set to the values in the
+    /// tuple at `index` (tuples in the same lexicographic order as [`cage_tuples`]),
+    /// then propagated to a new fixpoint.
+    ///
+    /// [`cage_tuples`]: Self::cage_tuples
+    ///
+    /// # Errors
+    /// Returns [`Error::InvalidCage`] if `cage` is not present in the puzzle, or
+    /// [`Error::InvalidTupleIndex`] if `index` is out of range.
+    #[allow(clippy::cast_possible_truncation)] // n is validated to 1..=9 in Puzzle::new
+    pub fn set_cage_tuple(&self, cage: &Cage, index: usize) -> Result<Self, Error> {
+        if !self.cages.contains(cage) {
+            return Err(Error::InvalidCage(cage.clone()));
+        }
+        let tuples: Vec<_> = cage.tuples(self.n as N).collect();
+        let tuple = tuples
+            .get(index)
+            .ok_or(Error::InvalidTupleIndex(index, tuples.len()))?;
+        let mut puzzle = self.clone();
+        for (cell, &value) in cage.cells().iter().zip(tuple) {
+            puzzle = puzzle.set_cell_value(*cell, value)?;
+        }
+        puzzle.fixpoint()
+    }
+
     /// Returns a new puzzle adding `cage` and propagating all constraints.
     ///
     /// # Errors
@@ -79,6 +120,29 @@ impl Puzzle {
         Self {
             n: self.n,
             values: self.values.clone(),
+            cages,
+        }
+        .fixpoint()
+    }
+
+    /// Returns a new puzzle with `cage` removed and constraints re-propagated.
+    ///
+    /// Returns `self` unchanged if `cage` is not present.
+    ///
+    /// All cell domains are reset to `{1..=n}` before propagation because removing
+    /// a cage can widen domains that it previously narrowed, and there is no way to
+    /// recover the pre-narrowing state without replaying from scratch.
+    ///
+    /// # Errors
+    /// Returns an error if propagation fails (e.g. a cell is out of bounds).
+    pub fn remove_cage(&self, cage: &Cage) -> Result<Self, Error> {
+        let mut cages = self.cages.clone();
+        if !cages.remove(cage) {
+            return Ok(self.clone());
+        }
+        Self {
+            n: self.n,
+            values: vec![Values::all(self.n); self.n * self.n].into_boxed_slice(),
             cages,
         }
         .fixpoint()
