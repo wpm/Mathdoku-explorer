@@ -64,6 +64,39 @@ jobs:
       - name: cargo test (mathdoku-designer)
         run: cd mathdoku-designer && cargo test
 
+  # ── Code coverage ──────────────────────────────────────────────────────────
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Cache cargo registry & build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: cargo llvm-cov (mathdoku)
+        run: cargo llvm-cov --lib --workspace --lcov --output-path lcov-mathdoku.info
+
+      - name: cargo llvm-cov (mathdoku-designer)
+        run: cd mathdoku-designer && cargo llvm-cov --lcov --output-path ../lcov-designer.info
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          files: lcov-mathdoku.info,lcov-designer.info
+          fail_ci_if_error: false
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
   # ── Cross-platform release builds (main only) ──────────────────────────────
   build:
     name: Build (${{ matrix.target }})
