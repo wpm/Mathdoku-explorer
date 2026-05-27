@@ -2,8 +2,8 @@ import { test, expect, type Page } from '@playwright/test';
 import { installTauriStubs, gotoApp, waitForGrid } from './helpers';
 import { ENTER, SHIFT_ARROW_RIGHT } from './keys';
 
-const fixButton = (page: Page) => page.getByRole('button', { name: 'Fix', exact: true });
-const unfixButton = (page: Page) => page.getByRole('button', { name: 'Unfix', exact: true });
+const fixButton = (page: Page) => page.getByRole('button', { name: 'Fix Solution', exact: true });
+const unfixButton = (page: Page) => page.getByRole('button', { name: 'Unfix Solution', exact: true });
 const selectorLabels = (page: Page) => page.locator('.grid-svg text[font-weight="700"]');
 
 test.describe('new-puzzle modal authoring mode', () => {
@@ -35,14 +35,30 @@ test.describe('new-puzzle modal authoring mode', () => {
 
 test.describe('fix / unfix mode switching', () => {
   test('Unfix drops the solution and Fix snapshots it back', async ({ page }) => {
-    // Default stub puzzle is With-Solution.
-    await installTauriStubs(page, { n: 5 });
+    // A fully-given 3×3 puzzle: unique solution, so Fix Solution is enabled after unfix.
+    const given3x3 = {
+      n: 3,
+      cages: [
+        { polyomino: [{ row: 0, column: 0 }], operation: { operator: 'Given', target: 1 } },
+        { polyomino: [{ row: 0, column: 1 }], operation: { operator: 'Given', target: 2 } },
+        { polyomino: [{ row: 0, column: 2 }], operation: { operator: 'Given', target: 3 } },
+        { polyomino: [{ row: 1, column: 0 }], operation: { operator: 'Given', target: 2 } },
+        { polyomino: [{ row: 1, column: 1 }], operation: { operator: 'Given', target: 3 } },
+        { polyomino: [{ row: 1, column: 2 }], operation: { operator: 'Given', target: 1 } },
+        { polyomino: [{ row: 2, column: 0 }], operation: { operator: 'Given', target: 3 } },
+        { polyomino: [{ row: 2, column: 1 }], operation: { operator: 'Given', target: 1 } },
+        { polyomino: [{ row: 2, column: 2 }], operation: { operator: 'Given', target: 2 } },
+      ],
+    };
+    await installTauriStubs(page, given3x3);
     await gotoApp(page);
     await waitForGrid(page);
 
     await expect(unfixButton(page)).toBeVisible();
     await unfixButton(page).click();
+    // After unfix the cages remain; unique solution means Fix Solution becomes enabled.
     await expect(fixButton(page)).toBeVisible();
+    await expect(fixButton(page)).toBeEnabled();
 
     await fixButton(page).click();
     await expect(unfixButton(page)).toBeVisible();
