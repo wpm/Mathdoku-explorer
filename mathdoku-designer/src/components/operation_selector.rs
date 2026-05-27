@@ -243,3 +243,346 @@ pub fn handle_key(
         }),
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::panic)]
+mod tests {
+    use super::{compute_target, key_to_operator};
+    use crate::partial_solution::PartialSolution;
+    use mathdoku::{Cell, Grid, Operator, Polyomino, Puzzle};
+
+    fn poly(positions: &[(usize, usize)]) -> Polyomino {
+        let cells: Vec<Cell> = positions.iter().map(|&(r, c)| Cell::new(r, c)).collect();
+        Polyomino::from_cells(&cells).unwrap()
+    }
+
+    /// A `PartialSolution` whose grid pins every cell to the Latin square
+    /// ```text
+    /// 1 2 3
+    /// 2 3 1
+    /// 3 1 2
+    /// ```
+    fn pinned_3x3() -> PartialSolution {
+        let square = vec![vec![1u8, 2, 3], vec![2, 3, 1], vec![3, 1, 2]];
+        let grid = Grid::from_latin_square(3, &square).unwrap();
+        PartialSolution::new(Puzzle::new(3).unwrap(), grid)
+    }
+
+    #[test]
+    fn compute_target_given_is_first_cell_value() {
+        let ps = pinned_3x3();
+        assert_eq!(
+            compute_target(&poly(&[(0, 1)]), &Operator::Given, &ps),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn compute_target_add_sums_cells() {
+        let ps = pinned_3x3();
+        // (0,0)=1, (0,1)=2, (0,2)=3 → 6
+        assert_eq!(
+            compute_target(&poly(&[(0, 0), (0, 1), (0, 2)]), &Operator::Add, &ps),
+            Some(6)
+        );
+    }
+
+    #[test]
+    fn compute_target_multiply_products_cells() {
+        let ps = pinned_3x3();
+        // (1,0)=2, (1,1)=3 → 6
+        assert_eq!(
+            compute_target(&poly(&[(1, 0), (1, 1)]), &Operator::Multiply, &ps),
+            Some(6)
+        );
+    }
+
+    #[test]
+    fn compute_target_subtract_is_absolute_difference() {
+        let ps = pinned_3x3();
+        // (0,0)=1, (0,1)=2 → |1-2| = 1
+        assert_eq!(
+            compute_target(&poly(&[(0, 0), (0, 1)]), &Operator::Subtract, &ps),
+            Some(1)
+        );
+    }
+
+    #[test]
+    fn compute_target_divide_returns_quotient_when_divisible() {
+        // A 6×6 grid pinning (0,0)=2 and (0,1)=6 so that 6 / 2 = 3.
+        // `from_latin_square` validates only the value range and dimensions, so
+        // the remaining filler values need not form a real Latin square.
+        let square = vec![
+            vec![2u8, 6, 1, 3, 4, 5],
+            vec![1, 2, 3, 4, 5, 6],
+            vec![3, 4, 5, 6, 1, 2],
+            vec![4, 5, 6, 1, 2, 3],
+            vec![5, 6, 1, 2, 3, 4],
+            vec![6, 1, 2, 3, 4, 5],
+        ];
+        let grid = Grid::from_latin_square(6, &square).unwrap();
+        let ps = PartialSolution::new(Puzzle::new(6).unwrap(), grid);
+        // (0,0)=2, (0,1)=6 → 6/2 = 3
+        assert_eq!(
+            compute_target(&poly(&[(0, 0), (0, 1)]), &Operator::Divide, &ps),
+            Some(3)
+        );
+    }
+
+    #[test]
+    fn compute_target_divide_none_when_not_divisible() {
+        let ps = pinned_3x3();
+        // (0,1)=2, (0,2)=3 → 3 not divisible by 2 → None
+        assert_eq!(
+            compute_target(&poly(&[(0, 1), (0, 2)]), &Operator::Divide, &ps),
+            None
+        );
+    }
+
+    #[test]
+    fn compute_target_none_when_domain_not_singleton() {
+        // Unconstrained grid: every cell domain is {1,2,3}, not a singleton.
+        let ps = PartialSolution::new(Puzzle::new(3).unwrap(), Grid::new(3).unwrap());
+        assert_eq!(
+            compute_target(&poly(&[(0, 0)]), &Operator::Given, &ps),
+            None
+        );
+    }
+
+    #[test]
+    fn key_to_operator_maps_known_keys() {
+        let all = [
+            Operator::Add,
+            Operator::Subtract,
+            Operator::Multiply,
+            Operator::Divide,
+        ];
+        assert_eq!(key_to_operator("+", &all), Some(Operator::Add));
+        assert_eq!(key_to_operator("-", &all), Some(Operator::Subtract));
+        assert_eq!(key_to_operator("x", &all), Some(Operator::Multiply));
+        assert_eq!(key_to_operator("X", &all), Some(Operator::Multiply));
+        assert_eq!(key_to_operator("/", &all), Some(Operator::Divide));
+    }
+
+    #[test]
+    fn key_to_operator_unknown_key_is_none() {
+        let all = [Operator::Add, Operator::Multiply];
+        assert_eq!(key_to_operator("q", &all), None);
+        assert_eq!(key_to_operator("", &all), None);
+    }
+
+    #[test]
+    fn key_to_operator_none_when_not_allowed() {
+        // Subtract/Divide are not in the allowed list for this polyomino size.
+        let allowed = [Operator::Add, Operator::Multiply];
+        assert_eq!(key_to_operator("-", &allowed), None);
+        assert_eq!(key_to_operator("/", &allowed), None);
+        assert_eq!(key_to_operator("+", &allowed), Some(Operator::Add));
+    }
+
+    mod handle_key {
+        use super::super::{PendingCommit, handle_key};
+        use super::poly;
+        use crate::keys::{ARROW_LEFT, ARROW_RIGHT, ENTER, ESCAPE, TAB};
+        use leptos::prelude::*;
+        use leptos::reactive::owner::Owner;
+        use mathdoku::Operator;
+        use mathdoku_designer_shared::State;
+
+        const ALL_OPS: [Operator; 4] = [
+            Operator::Add,
+            Operator::Subtract,
+            Operator::Multiply,
+            Operator::Divide,
+        ];
+
+        fn pending(committed: RwSignal<Option<Operator>>) -> PendingCommit {
+            let on_commit = Callback::new(move |op: Operator| committed.set(Some(op)));
+            PendingCommit {
+                polyomino: poly(&[(0, 0), (0, 1)]),
+                allowed: ALL_OPS.to_vec(),
+                selected_idx: RwSignal::new(0usize),
+                on_commit,
+            }
+        }
+
+        #[test]
+        fn escape_clears_pending_and_removes_provisional_cage() {
+            Owner::new().with(|| {
+                let committed = RwSignal::new(None);
+                let p = pending(committed);
+
+                let mut st = State::new(4).unwrap();
+                let _ = st.provisional_cages.insert(p.polyomino.clone());
+                let designer_state = RwSignal::new(st);
+                let pending_commit = RwSignal::new(Some(p.clone()));
+                let on_state_change = Callback::new(|_: State| {});
+
+                let consumed = handle_key(
+                    ESCAPE,
+                    false,
+                    &p,
+                    pending_commit,
+                    designer_state,
+                    on_state_change,
+                );
+
+                assert!(consumed);
+                assert!(pending_commit.get_untracked().is_none());
+                assert!(
+                    designer_state.get_untracked().provisional_cages.is_empty(),
+                    "the provisional cage should have been removed"
+                );
+            });
+        }
+
+        #[test]
+        fn tab_advances_selected_index() {
+            Owner::new().with(|| {
+                let committed = RwSignal::new(None);
+                let p = pending(committed);
+                let designer_state = RwSignal::new(State::new(4).unwrap());
+                let pending_commit = RwSignal::new(Some(p.clone()));
+                let on_state_change = Callback::new(|_: State| {});
+
+                let consumed = handle_key(
+                    TAB,
+                    false,
+                    &p,
+                    pending_commit,
+                    designer_state,
+                    on_state_change,
+                );
+
+                assert!(consumed);
+                assert_eq!(p.selected_idx.get_untracked(), 1);
+            });
+        }
+
+        #[test]
+        fn shift_tab_wraps_backwards() {
+            Owner::new().with(|| {
+                let committed = RwSignal::new(None);
+                let p = pending(committed);
+                p.selected_idx.set(0);
+                let designer_state = RwSignal::new(State::new(4).unwrap());
+                let pending_commit = RwSignal::new(Some(p.clone()));
+                let on_state_change = Callback::new(|_: State| {});
+
+                let _ = handle_key(
+                    TAB,
+                    true,
+                    &p,
+                    pending_commit,
+                    designer_state,
+                    on_state_change,
+                );
+
+                // From 0, Shift+Tab wraps to the last index (4 operators → 3).
+                assert_eq!(p.selected_idx.get_untracked(), 3);
+            });
+        }
+
+        #[test]
+        fn arrow_right_advances_and_arrow_left_wraps() {
+            Owner::new().with(|| {
+                let committed = RwSignal::new(None);
+                let p = pending(committed);
+                let designer_state = RwSignal::new(State::new(4).unwrap());
+                let pending_commit = RwSignal::new(Some(p.clone()));
+                let on_state_change = Callback::new(|_: State| {});
+
+                let _ = handle_key(
+                    ARROW_RIGHT,
+                    false,
+                    &p,
+                    pending_commit,
+                    designer_state,
+                    on_state_change,
+                );
+                assert_eq!(p.selected_idx.get_untracked(), 1);
+
+                // ArrowLeft from index 1 moves back to 0.
+                let _ = handle_key(
+                    ARROW_LEFT,
+                    false,
+                    &p,
+                    pending_commit,
+                    designer_state,
+                    on_state_change,
+                );
+                assert_eq!(p.selected_idx.get_untracked(), 0);
+            });
+        }
+
+        #[test]
+        fn enter_commits_the_selected_operator() {
+            Owner::new().with(|| {
+                let committed = RwSignal::new(None);
+                let p = pending(committed);
+                p.selected_idx.set(2); // Multiply
+                let designer_state = RwSignal::new(State::new(4).unwrap());
+                let pending_commit = RwSignal::new(Some(p.clone()));
+                let on_state_change = Callback::new(|_: State| {});
+
+                let consumed = handle_key(
+                    ENTER,
+                    false,
+                    &p,
+                    pending_commit,
+                    designer_state,
+                    on_state_change,
+                );
+
+                assert!(consumed);
+                assert_eq!(committed.get_untracked(), Some(Operator::Multiply));
+            });
+        }
+
+        #[test]
+        fn operator_shortcut_key_commits() {
+            Owner::new().with(|| {
+                let committed = RwSignal::new(None);
+                let p = pending(committed);
+                let designer_state = RwSignal::new(State::new(4).unwrap());
+                let pending_commit = RwSignal::new(Some(p.clone()));
+                let on_state_change = Callback::new(|_: State| {});
+
+                let consumed = handle_key(
+                    "+",
+                    false,
+                    &p,
+                    pending_commit,
+                    designer_state,
+                    on_state_change,
+                );
+
+                assert!(consumed);
+                assert_eq!(committed.get_untracked(), Some(Operator::Add));
+            });
+        }
+
+        #[test]
+        fn unhandled_key_is_not_consumed() {
+            Owner::new().with(|| {
+                let committed = RwSignal::new(None);
+                let p = pending(committed);
+                let designer_state = RwSignal::new(State::new(4).unwrap());
+                let pending_commit = RwSignal::new(Some(p.clone()));
+                let on_state_change = Callback::new(|_: State| {});
+
+                let consumed = handle_key(
+                    "q",
+                    false,
+                    &p,
+                    pending_commit,
+                    designer_state,
+                    on_state_change,
+                );
+
+                assert!(!consumed);
+                assert!(committed.get_untracked().is_none());
+            });
+        }
+    }
+}

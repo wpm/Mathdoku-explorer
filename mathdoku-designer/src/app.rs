@@ -112,7 +112,10 @@ fn basename(path: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use super::basename;
+    use super::{
+        basename, body_style, dialog_style, neutral_btn_style, overlay_style, primary_btn_style,
+        title_style,
+    };
 
     #[test]
     fn unix_path() {
@@ -135,6 +138,38 @@ mod tests {
     #[test]
     fn empty_string() {
         assert_eq!(basename(""), "");
+    }
+
+    #[test]
+    fn basename_trailing_separator_is_empty() {
+        assert_eq!(basename("/home/user/"), "");
+    }
+
+    #[test]
+    fn overlay_style_is_a_fixed_fullscreen_overlay() {
+        let s = overlay_style();
+        assert!(s.contains("position:fixed"));
+        assert!(s.contains("z-index:2000"));
+    }
+
+    #[test]
+    fn dialog_style_embeds_width_bounds() {
+        let s = dialog_style(280, 380);
+        assert!(s.contains("min-width:280px"));
+        assert!(s.contains("max-width:380px"));
+    }
+
+    #[test]
+    fn text_styles_are_non_empty() {
+        assert!(title_style().contains("font-size"));
+        assert!(body_style().contains("font-size"));
+    }
+
+    #[test]
+    fn primary_and_neutral_buttons_share_appearance() {
+        // primary_btn_style is documented to match neutral_btn_style.
+        assert_eq!(primary_btn_style(), neutral_btn_style());
+        assert!(neutral_btn_style().contains("cursor:pointer"));
     }
 }
 

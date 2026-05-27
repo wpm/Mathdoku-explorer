@@ -27,11 +27,48 @@ pub fn Cell(
     /// domain has multiple candidates, this value is rendered larger and in green.
     solution_value: Option<u8>,
 ) -> impl IntoView {
+    let glyphs = cell_glyphs(x, y, cell, &domain, top_margin, n, solution_value);
+
+    view! {
+        <rect x=x y=y width=cell height=cell fill=fill />
+        {glyphs.into_iter().map(|(cx, cy, label, font_size, color, weight)| view! {
+            <text
+                x=cx y=cy
+                text-anchor="middle"
+                dominant-baseline="central"
+                font-family=SANS
+                font-size=font_size
+                font-weight=weight
+                fill=color
+            >{label}</text>
+        }).collect::<Vec<_>>()}
+    }
+}
+
+const DOMAIN_EDGE: f64 = 4.0;
+
+/// A positioned digit to render in a cell: `(x, y, label, font_size, fill, font_weight)`.
+type Glyph = (f64, f64, String, f64, &'static str, &'static str);
+
+/// Computes the positioned digit glyphs for a cell's domain.
+///
+/// A singleton domain renders one large centred digit; multiple candidates are
+/// laid out as die-style pips (or a square sub-grid for counts above nine). When
+/// `solution_value` matches a candidate it is drawn larger and in green.
+fn cell_glyphs(
+    x: f64,
+    y: f64,
+    cell: f64,
+    domain: &[u8],
+    top_margin: f64,
+    n: usize,
+    solution_value: Option<u8>,
+) -> Vec<Glyph> {
     let zone_w = 2.0f64.mul_add(-DOMAIN_EDGE, cell);
     let zone_h = cell - top_margin - DOMAIN_EDGE;
     let domain_f = (zone_h / 3.5).clamp(7.0, zone_h);
 
-    let mut glyphs: Vec<(f64, f64, String, f64, &'static str, &'static str)> = Vec::new();
+    let mut glyphs: Vec<Glyph> = Vec::new();
 
     if domain.len() == 1 {
         let singleton_f = (cell * 0.5).max(12.0);
@@ -82,23 +119,8 @@ pub fn Cell(
         }
     }
 
-    view! {
-        <rect x=x y=y width=cell height=cell fill=fill />
-        {glyphs.into_iter().map(|(cx, cy, label, font_size, color, weight)| view! {
-            <text
-                x=cx y=cy
-                text-anchor="middle"
-                dominant-baseline="central"
-                font-family=SANS
-                font-size=font_size
-                font-weight=weight
-                fill=color
-            >{label}</text>
-        }).collect::<Vec<_>>()}
-    }
+    glyphs
 }
-
-const DOMAIN_EDGE: f64 = 4.0;
 
 fn domain_layout(count: usize) -> Option<&'static [(f32, f32)]> {
     LAYOUTS.get(count.wrapping_sub(1)).copied()
@@ -162,3 +184,93 @@ const LAYOUTS: [&[(f32, f32)]; 9] = [
         (0.75, 0.85),
     ],
 ];
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use super::{cell_glyphs, domain_layout};
+    use crate::theme::{GREEN, INK, INK3};
+
+    #[test]
+    fn layout_count_matches_pip_count_for_one_through_nine() {
+        for count in 1..=9 {
+            let pips = domain_layout(count);
+            assert!(pips.is_some(), "expected a layout for count {count}");
+            assert_eq!(
+                pips.map(<[(f32, f32)]>::len),
+                Some(count),
+                "layout for count {count} has the wrong number of pips"
+            );
+        }
+    }
+
+    #[test]
+    fn layout_zero_is_none() {
+        assert!(domain_layout(0).is_none());
+    }
+
+    #[test]
+    fn layout_above_nine_is_none() {
+        assert!(domain_layout(10).is_none());
+        assert!(domain_layout(100).is_none());
+    }
+
+    #[test]
+    fn layout_pips_are_within_unit_square() {
+        for count in 1..=9 {
+            if let Some(pips) = domain_layout(count) {
+                for &(x, y) in pips {
+                    assert!((0.0..=1.0).contains(&x), "x={x} out of range");
+                    assert!((0.0..=1.0).contains(&y), "y={y} out of range");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn glyphs_empty_domain_produces_nothing() {
+        let glyphs = cell_glyphs(0.0, 0.0, 60.0, &[], 16.0, 4, None);
+        assert!(glyphs.is_empty());
+    }
+
+    #[test]
+    fn glyphs_singleton_is_one_centered_ink_digit() {
+        let glyphs = cell_glyphs(10.0, 20.0, 60.0, &[5], 16.0, 4, None);
+        assert_eq!(glyphs.len(), 1);
+        let (cx, cy, ref label, _font, fill, weight) = glyphs[0];
+        // Centred within the cell.
+        assert!((cx - 40.0).abs() < f64::EPSILON);
+        assert!((cy - 50.0).abs() < f64::EPSILON);
+        assert_eq!(label, "5");
+        assert_eq!(fill, INK);
+        assert_eq!(weight, "600");
+    }
+
+    #[test]
+    fn glyphs_multi_domain_uses_pip_layout() {
+        let glyphs = cell_glyphs(0.0, 0.0, 60.0, &[1, 2, 3], 16.0, 4, None);
+        assert_eq!(glyphs.len(), 3);
+        let labels: Vec<&str> = glyphs.iter().map(|g| g.2.as_str()).collect();
+        assert_eq!(labels, vec!["1", "2", "3"]);
+    }
+
+    #[test]
+    fn glyphs_highlight_solution_value_in_green() {
+        let glyphs = cell_glyphs(0.0, 0.0, 60.0, &[1, 2, 3], 16.0, 4, Some(2));
+        // The candidate equal to the solution value is green and bold; others grey.
+        let two = glyphs.iter().find(|g| g.2 == "2").unwrap();
+        let one = glyphs.iter().find(|g| g.2 == "1").unwrap();
+        assert_eq!(two.4, GREEN);
+        assert_eq!(two.5, "600");
+        assert_eq!(one.4, INK3);
+        assert_eq!(one.5, "normal");
+    }
+
+    #[test]
+    fn glyphs_more_than_nine_use_square_fallback() {
+        let domain: Vec<u8> = (1..=10).collect();
+        let glyphs = cell_glyphs(0.0, 0.0, 120.0, &domain, 16.0, 10, None);
+        // The fallback grid renders every candidate.
+        assert_eq!(glyphs.len(), 10);
+    }
+}

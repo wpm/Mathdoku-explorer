@@ -541,3 +541,90 @@ fn step_provisional_cage(r: usize, c: usize, tr: usize, tc: usize, state: State)
         ..state
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::panic)]
+mod tests {
+    use super::step_provisional_cage;
+    use mathdoku::{Cell, Polyomino};
+    use mathdoku_designer_shared::State;
+
+    fn poly(positions: &[(usize, usize)]) -> Polyomino {
+        let cells: Vec<Cell> = positions.iter().map(|&(r, c)| Cell::new(r, c)).collect();
+        Polyomino::from_cells(&cells).unwrap()
+    }
+
+    fn cells_of(p: &Polyomino) -> Vec<(usize, usize)> {
+        p.cells().into_iter().map(|c| (c.row, c.column)).collect()
+    }
+
+    #[test]
+    fn starts_new_singleton_and_extends_to_target() {
+        let state = State::new(4).unwrap();
+        let result = step_provisional_cage(0, 0, 0, 1, state);
+
+        assert_eq!(result.active, Cell::new(0, 1));
+        assert_eq!(result.provisional_cages.len(), 1);
+        let region = result.provisional_cages.iter().next().unwrap();
+        assert_eq!(cells_of(region), vec![(0, 0), (0, 1)]);
+    }
+
+    #[test]
+    fn extends_existing_provisional_cage() {
+        let mut state = State::new(4).unwrap();
+        assert!(state.provisional_cages.insert(poly(&[(0, 0), (0, 1)])));
+
+        // Active cell (0,1) belongs to the existing cage; extend it to (0,2).
+        let result = step_provisional_cage(0, 1, 0, 2, state);
+
+        assert_eq!(result.active, Cell::new(0, 2));
+        assert_eq!(result.provisional_cages.len(), 1);
+        let region = result.provisional_cages.iter().next().unwrap();
+        assert_eq!(cells_of(region), vec![(0, 0), (0, 1), (0, 2)]);
+    }
+
+    #[test]
+    fn preserves_other_provisional_cages_when_starting_fresh() {
+        let mut state = State::new(4).unwrap();
+        assert!(state.provisional_cages.insert(poly(&[(3, 3), (3, 2)])));
+
+        // (0,0) is not in any existing cage — a new region is started while the
+        // unrelated cage is left untouched.
+        let result = step_provisional_cage(0, 0, 1, 0, state);
+
+        assert_eq!(result.active, Cell::new(1, 0));
+        assert_eq!(result.provisional_cages.len(), 2);
+        let has_new = result
+            .provisional_cages
+            .iter()
+            .any(|p| cells_of(p) == vec![(0, 0), (1, 0)]);
+        let has_old = result
+            .provisional_cages
+            .iter()
+            .any(|p| cells_of(p) == vec![(3, 2), (3, 3)]);
+        assert!(has_new, "new region should be present");
+        assert!(has_old, "pre-existing region should be preserved");
+    }
+
+    #[test]
+    fn extends_the_active_cage_leaving_others_alone() {
+        let mut state = State::new(5).unwrap();
+        assert!(state.provisional_cages.insert(poly(&[(0, 0), (0, 1)])));
+        assert!(state.provisional_cages.insert(poly(&[(4, 4), (4, 3)])));
+
+        let result = step_provisional_cage(0, 1, 0, 2, state);
+
+        assert_eq!(result.active, Cell::new(0, 2));
+        assert_eq!(result.provisional_cages.len(), 2);
+        let has_extended = result
+            .provisional_cages
+            .iter()
+            .any(|p| cells_of(p) == vec![(0, 0), (0, 1), (0, 2)]);
+        let has_other = result
+            .provisional_cages
+            .iter()
+            .any(|p| cells_of(p) == vec![(4, 3), (4, 4)]);
+        assert!(has_extended);
+        assert!(has_other);
+    }
+}
