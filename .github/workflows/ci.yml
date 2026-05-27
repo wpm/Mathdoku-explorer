@@ -110,6 +110,24 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
+  # ── Slow tests (main only) ────────────────────────────────────────────────
+  slow-tests:
+    name: Slow tests
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry & build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: cargo test --include-ignored (mathdoku)
+        run: cargo test --lib -- --include-ignored
+
   # ── Cross-platform release builds (main only) ──────────────────────────────
   build:
     name: Build (${{ matrix.target }})

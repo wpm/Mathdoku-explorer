@@ -433,6 +433,7 @@ mod tests {
     // --- property test: equivalence with the reference enumerator ---
 
     #[test]
+    #[ignore = "exhaustive property test; run with --include-ignored on merge to main"]
     fn mdd_matches_reference_across_shapes_operators_and_grids() {
         let shapes = [singleton(), pair(), col_pair(), l_shape(), square()];
         for shape in &shapes {
