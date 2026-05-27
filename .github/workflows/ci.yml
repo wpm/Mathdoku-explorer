@@ -57,7 +57,20 @@ jobs:
       - name: cargo doc
         run: cargo doc --no-deps
 
-      # ── tests ─────────────────────────────────────────────────────────────
+  # ── Tests (runs on every push, independently of the checks above) ──────────
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry & build artifacts
+        uses: Swatinem/rust-cache@v2
+
       - name: cargo test (mathdoku)
         run: cargo test --lib
 
