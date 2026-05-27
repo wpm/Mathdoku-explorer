@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { installTauriStubs, gotoApp, waitForGrid } from './helpers';
-import { ARROW_DOWN, ARROW_LEFT, ARROW_RIGHT, ENTER, ESCAPE, SHIFT_ARROW_LEFT, SHIFT_ARROW_RIGHT, TAB } from './keys';
+import { ARROW_DOWN, ARROW_LEFT, ARROW_RIGHT, BACKSPACE, DELETE, ENTER, ESCAPE, SHIFT_ARROW_LEFT, SHIFT_ARROW_RIGHT, TAB } from './keys';
 
 // Empty 3×3: no cages.
 const EMPTY_3X3 = { n: 3 };
@@ -273,6 +273,63 @@ test.describe('Escape demotes committed cage', () => {
     await setup(page);
     // (0,0) is uncovered and has no provisional cage.
     await page.keyboard.press(ESCAPE);
+    await expect(provisionalLines(page)).toHaveCount(0);
+    await expect(accentRect(page)).toHaveCount(1);
+  });
+});
+
+test.describe('Delete removes cages', () => {
+  test('Delete on a committed cage deletes it outright (no demotion)', async ({ page }) => {
+    await setup(page);
+    await page.keyboard.press(ENTER); // commit singleton at (0,0)
+    await expect(page.locator('.grid-svg text[font-weight="700"]').filter({ hasText: /^1$/ })).toBeVisible();
+
+    await page.keyboard.press(DELETE); // delete the committed cage outright
+    // The cage label is gone (cage removed from committed cages).
+    await expect(page.locator('.grid-svg text[font-weight="700"]').filter({ hasText: /^1$/ })).toHaveCount(0);
+    // The cell is NOT demoted to a provisional cage — no purple outline.
+    await expect(provisionalLines(page)).toHaveCount(0);
+    // Still in Cell Mode at the now-uncovered cell.
+    await expect(accentRect(page)).toHaveCount(1);
+  });
+
+  test('Delete on a committed multi-cell cage deletes it without opening selector', async ({ page }) => {
+    await setup(page);
+    await page.keyboard.press(SHIFT_ARROW_RIGHT); // draw {(0,0),(0,1)}
+    await page.keyboard.press(ENTER);
+    await page.keyboard.press('+'); // commit as Add cage
+    await expect(page.locator('.grid-svg text[font-weight="700"]')).toHaveCount(1);
+
+    await page.keyboard.press(DELETE); // delete the committed cage outright
+    // No cage label and no operation selector tabs remain.
+    await expect(page.locator('.grid-svg text[font-weight="700"]')).toHaveCount(0);
+    // Not demoted to provisional.
+    await expect(provisionalLines(page)).toHaveCount(0);
+  });
+
+  test('Delete on a provisional cage deletes it', async ({ page }) => {
+    await setup(page);
+    await page.keyboard.press(SHIFT_ARROW_RIGHT); // draw {(0,0),(0,1)}, cursor at (0,1)
+    await expect(provisionalLines(page)).not.toHaveCount(0);
+
+    await page.keyboard.press(DELETE); // cursor at (0,1) is in the provisional cage — deletes it
+    await expect(provisionalLines(page)).toHaveCount(0);
+  });
+
+  test('Backspace behaves the same as Delete on a committed cage', async ({ page }) => {
+    await setup(page);
+    await page.keyboard.press(ENTER); // commit singleton at (0,0)
+    await expect(page.locator('.grid-svg text[font-weight="700"]').filter({ hasText: /^1$/ })).toBeVisible();
+
+    await page.keyboard.press(BACKSPACE);
+    await expect(page.locator('.grid-svg text[font-weight="700"]').filter({ hasText: /^1$/ })).toHaveCount(0);
+    await expect(provisionalLines(page)).toHaveCount(0);
+  });
+
+  test('Delete on uncovered cell does nothing', async ({ page }) => {
+    await setup(page);
+    // (0,0) is uncovered and has no provisional cage.
+    await page.keyboard.press(DELETE);
     await expect(provisionalLines(page)).toHaveCount(0);
     await expect(accentRect(page)).toHaveCount(1);
   });

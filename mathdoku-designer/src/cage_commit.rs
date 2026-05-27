@@ -47,6 +47,41 @@ pub fn commit_cage(
     });
 }
 
+/// Deletes a committed cage outright via the `remove_region` Tauri command.
+///
+/// Unlike [`demote_cage`], the removed cage is *not* re-added as a provisional
+/// cage and no operation selector is opened — the cells become uncovered. On
+/// success, pushes the pre-delete state onto `undo_stack`, clears `redo_stack`,
+/// preserves the existing provisional cages and active cell, and calls
+/// `on_puzzle_change`. On IPC error, calls `on_error`.
+pub fn delete_cage(
+    cells: Vec<Cell>,
+    undo_stack: RwSignal<Vec<State>>,
+    redo_stack: RwSignal<Vec<State>>,
+    designer_state: RwSignal<State>,
+    on_puzzle_change: Callback<State>,
+    on_error: Callback<String>,
+) {
+    spawn_local(async move {
+        let mut new_st = match ipc::remove_region(cells).await {
+            Ok(st) => st,
+            Err(e) => {
+                on_error.run(e.to_string());
+                return;
+            }
+        };
+        let pre_delete = designer_state.get_untracked();
+        new_st
+            .provisional_cages
+            .clone_from(&pre_delete.provisional_cages);
+        new_st.active = pre_delete.active;
+        undo_stack.update(|s| s.push(pre_delete));
+        redo_stack.update(std::vec::Vec::clear);
+        designer_state.set(new_st.clone());
+        on_puzzle_change.run(new_st);
+    });
+}
+
 /// Demotes a committed cage back to a provisional cage via the `remove_region` Tauri command,
 /// then opens the operation selector for it.
 ///

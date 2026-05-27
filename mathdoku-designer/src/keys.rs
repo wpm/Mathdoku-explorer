@@ -7,3 +7,5 @@ pub const ARROW_RIGHT: &str = "ArrowRight";
 pub const ENTER: &str = "Enter";
 pub const ESCAPE: &str = "Escape";
 pub const TAB: &str = "Tab";
+pub const DELETE: &str = "Delete";
+pub const BACKSPACE: &str = "Backspace";

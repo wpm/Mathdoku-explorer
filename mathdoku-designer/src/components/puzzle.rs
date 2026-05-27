@@ -20,14 +20,16 @@ use super::cell::Cell as CellComponent;
 use super::operation_selector::{OperationSelector, PendingCommit, handle_key};
 use super::selection::{ProvisionalFills, SelectionOverlay};
 use super::solution_count::SolutionCount;
-use crate::cage_commit::{commit_cage, demote_cage};
+use crate::cage_commit::{commit_cage, delete_cage, demote_cage};
 use crate::geometry::{
     MARGIN, THICK, THIN, anchor, assign_colors, cell_size, is_thick, op_font, origin,
 };
 use crate::ipc;
 use crate::partial_solution::PartialSolution;
 
-use crate::keys::{ARROW_DOWN, ARROW_LEFT, ARROW_RIGHT, ARROW_UP, ENTER, ESCAPE, TAB};
+use crate::keys::{
+    ARROW_DOWN, ARROW_LEFT, ARROW_RIGHT, ARROW_UP, BACKSPACE, DELETE, ENTER, ESCAPE, TAB,
+};
 use crate::theme::{BG, CAGE_PALETTE, INK, LINE, OP_INSET};
 
 #[component]
@@ -291,6 +293,33 @@ pub fn Puzzle(
                         designer_state,
                         on_puzzle_change,
                         open_selector,
+                        on_error,
+                    );
+                } else if let Some(poly) = st
+                    .provisional_cages
+                    .iter()
+                    .find(|p| p.cells().contains(&active_cell))
+                    .cloned()
+                {
+                    // Active cell is in a provisional cage — delete it.
+                    let mut new_st = st.clone();
+                    new_st.provisional_cages.remove(&poly);
+                    set_state(new_st);
+                } // else: uncovered cell — do nothing
+            }
+            DELETE | BACKSPACE => {
+                ev.prevent_default();
+                let active_cell = Cell::new(r, c);
+                if let Some(cage_idx) = partial_solution.cage_index_at(r, c) {
+                    // Active cell is in a committed cage — delete it outright
+                    // (no demotion to a provisional cage).
+                    let cells = cage_cells_static[cage_idx].clone();
+                    delete_cage(
+                        cells,
+                        undo_stack,
+                        redo_stack,
+                        designer_state,
+                        on_puzzle_change,
                         on_error,
                     );
                 } else if let Some(poly) = st
