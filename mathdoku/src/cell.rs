@@ -13,6 +13,8 @@ use crate::Error;
 pub type N = u8;
 /// A cage target (sum, product, difference, ratio, or given value).
 pub type M = u64;
+/// An ordered assignment of values to the cells of a cage, one value per cell.
+pub type Tuple = Vec<N>;
 
 /// A cell in a Mathdoku grid, identified by 0-based row and column index values
 /// in row-major order.

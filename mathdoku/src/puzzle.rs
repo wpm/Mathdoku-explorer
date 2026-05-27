@@ -1,5 +1,10 @@
 //! The [`Puzzle`] type: an `n×n` grid with cage constraints (no cell domains).
 
+// `Cage` caches its MDD behind a `OnceLock`, giving it interior mutability, but
+// its `Ord`/`Eq`/`Hash` impls depend only on the polyomino and operation — never
+// the cache — so using it as a `BTreeSet` key is sound.
+#![allow(clippy::mutable_key_type)]
+
 use crate::Error::InvalidGridSize;
 use crate::Error::RegionConflict;
 use crate::cage::Cage;

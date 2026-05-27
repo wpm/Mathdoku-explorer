@@ -6,10 +6,9 @@ use serde::de::Error as DeError;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::Error::InvalidGridSize;
-use crate::arithmetic::Tuple;
 use crate::cage::Cage;
 use crate::puzzle::Puzzle;
-use crate::{Cell, Error, N, Values};
+use crate::{Cell, Error, N, Tuple, Values};
 
 // Serde wire format: flat struct with an n×n `values` array of cell domains.
 // `values` is optional on deserialization; absent means full domains for all cells.
@@ -186,7 +185,8 @@ impl Grid {
         }
         let n = self.n as N;
         Ok(cage
-            .tuples(n)
+            .mdd(n)
+            .tuples()
             .filter(|tuple| {
                 tuple
                     .iter()
@@ -214,7 +214,7 @@ impl Grid {
         if !puzzle.cages().any(|c| c == cage) {
             return Err(Error::InvalidCage(cage.clone()));
         }
-        let tuples: Vec<_> = cage.tuples(self.n as N).collect();
+        let tuples: Vec<_> = cage.mdd(self.n as N).tuples().collect();
         let tuple = tuples
             .get(index)
             .ok_or(Error::InvalidTupleIndex(index, tuples.len()))?;
@@ -579,6 +579,102 @@ mod tests {
                 assert_eq!(row_sum, 6, "row {r} should sum to 6");
             }
         }
+    }
+
+    #[test]
+    fn solutions_4x4_mixed_cages_match_expected_set() {
+        // End-to-end regression for the MDD cutover. A fully caged 4×4 puzzle
+        // mixing cage shapes (givens, row pairs, a column pair, horizontal
+        // triominoes) and operators (Given / Add / Subtract / Multiply). The
+        // puzzle is intentionally under-determined: MDD-based cage propagation
+        // must reproduce *exactly* the same three-solution set the old
+        // multiset → permute → filter pipeline produced.
+        let puzzle = Puzzle::new(4)
+            .unwrap()
+            .insert_cage(cage_at(&[(0, 0)], Given, 1))
+            .unwrap()
+            .insert_cage(cage_at(&[(0, 1), (0, 2)], Add, 5))
+            .unwrap()
+            .insert_cage(cage_at(&[(0, 3), (1, 3)], Add, 6))
+            .unwrap()
+            .insert_cage(cage_at(&[(1, 0), (1, 1)], Operator::Multiply, 12))
+            .unwrap()
+            .insert_cage(cage_at(&[(1, 2)], Given, 1))
+            .unwrap()
+            .insert_cage(cage_at(&[(2, 0), (3, 0)], Operator::Subtract, 2))
+            .unwrap()
+            .insert_cage(cage_at(&[(2, 1), (2, 2), (2, 3)], Operator::Multiply, 12))
+            .unwrap()
+            .insert_cage(cage_at(&[(3, 1), (3, 2), (3, 3)], Operator::Multiply, 6))
+            .unwrap();
+
+        let grid = Grid::new(4).unwrap();
+        let mut actual: Vec<[[u8; 4]; 4]> = grid
+            .solutions(&puzzle)
+            .map(Result::unwrap)
+            .map(|g| {
+                let mut m = [[0u8; 4]; 4];
+                for (r, row) in m.iter_mut().enumerate() {
+                    for (c, slot) in row.iter_mut().enumerate() {
+                        *slot = g.cell_values(Cell::new(r, c)).unwrap().values()[0];
+                    }
+                }
+                m
+            })
+            .collect();
+        actual.sort_unstable();
+
+        // Independent of the expected set below, every returned grid must be a
+        // genuine Latin square (each row and column a permutation of 1..=4).
+        for m in &actual {
+            for (i, row) in m.iter().enumerate() {
+                let mut row = row.to_vec();
+                let mut col: Vec<u8> = (0..4).map(|r| m[r][i]).collect();
+                row.sort_unstable();
+                col.sort_unstable();
+                assert_eq!(row, vec![1, 2, 3, 4], "row {i} is not a permutation");
+                assert_eq!(col, vec![1, 2, 3, 4], "column {i} is not a permutation");
+            }
+        }
+
+        let mut expected = [
+            [[1, 3, 2, 4], [3, 4, 1, 2], [2, 1, 4, 3], [4, 2, 3, 1]],
+            [[1, 2, 3, 4], [3, 4, 1, 2], [2, 3, 4, 1], [4, 1, 2, 3]],
+            [[1, 2, 3, 4], [3, 4, 1, 2], [2, 1, 4, 3], [4, 3, 2, 1]],
+        ];
+        expected.sort_unstable();
+        assert_eq!(actual, expected);
+    }
+
+    // --- Grid::set_cage_tuple ---
+
+    #[test]
+    fn set_cage_tuple_pins_cells_in_lexicographic_order() {
+        // Add cage over (0,0),(0,1) with target 3: the lexicographically first
+        // valid tuple is [1, 2], so index 0 pins (0,0)=1 and (0,1)=2.
+        let puzzle = puzzle_with_cage(4, &[(0, 0), (0, 1)], Add, 3);
+        let cage = puzzle.cages().next().unwrap().clone();
+        let grid = Grid::new(4).unwrap();
+        let set = grid.set_cage_tuple(&puzzle, &cage, 0).unwrap();
+        assert_eq!(
+            set.cell_values(Cell::new(0, 0)).unwrap(),
+            Values::new(&[1]).unwrap()
+        );
+        assert_eq!(
+            set.cell_values(Cell::new(0, 1)).unwrap(),
+            Values::new(&[2]).unwrap()
+        );
+    }
+
+    #[test]
+    fn set_cage_tuple_out_of_range_index_errors() {
+        let puzzle = puzzle_with_cage(4, &[(0, 0), (0, 1)], Add, 3);
+        let cage = puzzle.cages().next().unwrap().clone();
+        let grid = Grid::new(4).unwrap();
+        assert!(matches!(
+            grid.set_cage_tuple(&puzzle, &cage, 999),
+            Err(Error::InvalidTupleIndex(999, _))
+        ));
     }
 
     // --- serde round-trip ---

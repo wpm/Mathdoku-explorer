@@ -18,10 +18,9 @@
 //! - **Construct** a puzzle programmatically with [`Puzzle::new`] and [`Puzzle::insert_cage`].
 //! - **Inspect** cell domains with [`Grid::cell_values`].
 //! - **Solve** with [`Grid::solutions`].
-//! - **Enumerate cage assignments** with [`tuples()`].
+//! - **Enumerate a cage's valid assignments** with [`Cage::mdd`] then [`Mdd::tuples`].
 //! - **Query valid operators** for a polyomino with [`operators`].
 
-mod arithmetic;
 mod cage;
 mod cell;
 mod csp;
@@ -30,22 +29,21 @@ pub mod generate;
 pub mod grid;
 mod grid_csp;
 pub mod latin_square;
+pub mod mdd;
 pub mod operation;
 mod polyomino;
 pub mod puzzle;
 mod regin;
 #[cfg(test)]
 mod test_utils;
-pub mod tuples;
 
-pub use arithmetic::Tuple;
 pub use cage::Cage;
-pub use cell::{Cell, M, N, Values};
+pub use cell::{Cell, M, N, Tuple, Values};
 pub use error::Error;
 pub use generate::generate;
 pub use grid::Grid;
 pub use latin_square::generate_latin_square;
+pub use mdd::Mdd;
 pub use operation::{Operation, Operator, operators};
 pub use polyomino::Polyomino;
 pub use puzzle::Puzzle;
-pub use tuples::tuples;

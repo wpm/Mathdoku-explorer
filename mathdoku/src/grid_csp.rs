@@ -154,7 +154,7 @@ impl Constraint<Grid, PuzzleCell, Error> for AllDifferent {
 }
 
 /// Prunes cell domains to values that appear in at least one valid tuple for this cage's arithmetic
-/// operation.
+/// operation, computed as the GAC support of the cage's [`Mdd`](crate::Mdd).
 fn propagate_cage(
     cage: &Cage,
     cages: &Arc<Vec<Cage>>,
@@ -165,23 +165,8 @@ fn propagate_cage(
         .iter()
         .map(|&c| state.cell_values(c))
         .collect::<Result<_, _>>()?;
-
-    // A value survives at position i iff some valid tuple uses it there
-    // and every other position's value is in that cell's current domain.
-    let mut new_domains = vec![Values::default(); cells.len()];
     #[allow(clippy::cast_possible_truncation)]
-    for tuple in cage.tuples(state.n() as N) {
-        if tuple
-            .iter()
-            .zip(&old_domains)
-            .all(|(&v, domain)| domain.contains(v))
-        {
-            for (i, &v) in tuple.iter().enumerate() {
-                new_domains[i] = new_domains[i] | Values::singleton(v);
-            }
-        }
-    }
-
+    let new_domains = cage.mdd(state.n() as N).support(&old_domains);
     apply_domains(state, cages, &cells, &old_domains, &new_domains)
 }
 
