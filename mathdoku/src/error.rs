@@ -11,6 +11,7 @@ use crate::cage::Cage;
 use crate::cell::Cell;
 use crate::operation::{Operation, Operator};
 use crate::polyomino::Polyomino;
+
 /// Errors that can occur during puzzle construction or solving.
 #[derive(Debug)]
 pub enum Error {

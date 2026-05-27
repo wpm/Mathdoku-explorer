@@ -3,7 +3,7 @@
 //! The entry point is [`regin_gac`], which prunes the domains of a set of
 //! variables so that every surviving value participates in at least one
 //! complete assignment of distinct values. The algorithm runs in
-//! O(*n* + *e*) time (where *n* is the number of variables and *e* the total
+//! `O(n + e)` time (where `n` is the number of variables and `e` the total
 //! domain size) by reducing GAC to a maximum bipartite matching followed by
 //! a strongly connected-components decomposition of the residual digraph.
 //!

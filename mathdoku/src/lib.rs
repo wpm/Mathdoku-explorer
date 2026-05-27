@@ -10,6 +10,7 @@
 //! | [`Puzzle`] | An `n×n` cage structure (no cell domains). |
 //! | [`Grid`] | An `n×n` grid of cell domains. |
 //! | [`Tuple`] | An ordered assignment of values to the cells of a cage. |
+//! | [`Mdd`] | A reduced ordered MDD over a cage's valid tuples. |
 //!
 //! ## Entry points
 //!
@@ -20,6 +21,17 @@
 //! - **Solve** with [`Grid::solutions`].
 //! - **Enumerate a cage's valid assignments** with [`Cage::mdd`] then [`Mdd::tuples`].
 //! - **Query valid operators** for a polyomino with [`operators`].
+//!
+//! ## Architecture
+//!
+//! Solving uses MAC (Maintaining Arc Consistency): [`Grid::solutions`] alternates between
+//! branching on the most-constrained cell and propagating all constraints to a fixpoint.
+//! Two propagators run on each fixpoint step:
+//!
+//! - **All-different** (rows and columns): Régin's GAC algorithm (internal `regin` module).
+//! - **Cage arithmetic**: [`Mdd::support`] computes per-cell GAC support in `O(|edges|)`
+//!   using the MDD-4R algorithm (top-down reachability + bottom-up co-reachability sweep).
+//!   See [`mdd`] for the full algorithm and references.
 
 mod cage;
 mod cell;

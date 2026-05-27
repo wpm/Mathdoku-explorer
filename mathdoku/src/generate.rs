@@ -1,5 +1,8 @@
 //! Core puzzle generation: assigns operations and targets to cages over a
 //! solved Latin square.
+//!
+//! The public entry points are [`generate`] (default settings) and
+//! [`generate_with`] (custom operation policy and cage-size distribution).
 
 #![allow(clippy::cast_precision_loss)] // usize→f64 for Poisson mean/sample; values are small
 
@@ -15,8 +18,11 @@ use crate::latin_square::generate_latin_square;
 use crate::operation::{Operation, Operator};
 use crate::polyomino::Polyomino;
 use crate::puzzle::Puzzle;
-/// Poisson distribution over cage sizes, truncated to `[1, n*n]` by
-/// rejection sampling.
+/// A Poisson cage-size distribution truncated to `[1, n²]` by rejection sampling.
+///
+/// Cage sizes are drawn from `Poisson(mean)` and resampled until the result
+/// falls in `[1, n²]`. The mean must be strictly positive so rejection sampling
+/// is guaranteed to terminate.
 #[derive(Debug, Clone, Copy)]
 pub struct SizeDistribution {
     mean: f64,

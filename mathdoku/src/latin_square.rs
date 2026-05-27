@@ -1,3 +1,10 @@
+//! Uniformly random Latin square generation via the Jacobson–Matthews Markov chain.
+//!
+//! The entry point is [`generate_latin_square`].
+//!
+//! Reference: Mark T. Jacobson and Peter Matthews, "Generating uniformly distributed random Latin
+//! squares", *Journal of Combinatorial Designs* 4(6), 1996, pp. 405–437.
+
 #![allow(
     clippy::many_single_char_names,   // r/c/v/i/j/k are conventional for Latin-square indices
     clippy::cast_possible_truncation, // v+1 <= n <= 9 always fits in N (u8)

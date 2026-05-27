@@ -4,14 +4,17 @@
 //!
 //! | CSP concept | Mathdoku instance |
 //! |-------------|-------------------|
-//! | Variable    | [`PuzzleCell`] — a single cell in a [`Grid`] whose domain is a [`Values`] set |
-//! | Constraint  | [`AllDifferent`] — every row and column must contain distinct values |
+//! | Variable    | `PuzzleCell` — a single cell in a [`Grid`] whose domain is a [`Values`] set |
+//! | Constraint  | `AllDifferent` — every row and column must contain distinct values |
 //! | Constraint  | [`Cage`] — arithmetic target over a polyomino of cells |
 //! | State       | [`Grid`] — holds one [`Values`] domain per cell |
 //!
-//! [`generalized_arc_consistency`] drives solving: it maintains a worklist
+//! [`crate::csp::generalized_arc_consistency`] drives solving: it maintains a worklist
 //! of constraints and propagates each in turn, re-queuing constraints adjacent to any
 //! cell whose domain shrinks, until no constraint can narrow any domain further.
+//!
+//! Row and column all-different is enforced via [`crate::regin`]; cage constraint
+//! propagation uses [`Mdd::support`](crate::Mdd::support).
 
 use std::sync::Arc;
 

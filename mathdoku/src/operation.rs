@@ -4,6 +4,9 @@ use std::fmt;
 use std::fmt::{Display, Formatter};
 
 /// An [`Operator`] paired with a numeric target value imposed on a cage's cells.
+///
+/// Displayed as the operator symbol followed by the target (e.g. `+5`, `×12`).
+/// A [`Given`](Operator::Given) operation displays as just the target with no symbol.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Operation {
     pub operator: Operator,
@@ -11,6 +14,7 @@ pub struct Operation {
 }
 
 impl Operation {
+    /// Creates an operation from an operator and a target value.
     pub const fn new(operator: Operator, target: M) -> Self {
         Self { operator, target }
     }
@@ -50,6 +54,12 @@ impl Display for Operator {
     }
 }
 
+/// Returns the operators valid for a cage of the given polyomino's size.
+///
+/// - 1 cell: [`Operator::Given`] only.
+/// - 2 cells: all four binary operators.
+/// - 3+ cells: [`Operator::Add`] and [`Operator::Multiply`] only
+///   (subtraction and division are undefined for more than two operands).
 pub fn operators(polynomial: &Polyomino) -> Vec<Operator> {
     match polynomial.len() {
         1 => vec![Operator::Given],

@@ -1,4 +1,4 @@
-//! Multi-valued Decision Diagram (MDD) construction for cage tuples.
+//! Multi-valued Decision Diagram (MDD) representation of cage constraints.
 //!
 //! An [`Mdd`] is a reduced, ordered DAG representing exactly the valid [`Tuple`]s
 //! of a cage: one level per cell (in [`Polyomino::cells`] order), edges labelled by
@@ -12,6 +12,33 @@
 //! result is the unique reduced ordered MDD for the cell ordering. Following Knuth,
 //! "equivalent" denotes this node-merging relation, reserving "isomorphic" for graph
 //! isomorphism.
+//!
+//! [`Mdd::support`] computes per-cell GAC support in `O(|edges|)` via a top-down
+//! reachability sweep followed by a bottom-up co-reachability sweep (MDD-4R), which
+//! is strictly faster than enumerating paths when cages are large.
+//!
+//! ## References
+//!
+//! - Bryant, R. E. (1986). [Graph-Based Algorithms for Boolean Function
+//!   Manipulation](https://www.cs.cmu.edu/~bryant/pubdir/ieeetc86.pdf). *IEEE
+//!   Transactions on Computers*, C-35(8), 677–691. The original reduced ordered BDD
+//!   paper. Establishes that one post-order pass with hash-consing on
+//!   `(variable, sorted (label, child_id))` produces the canonical reduced form, and
+//!   that the reduced form is unique for a fixed variable ordering. The construction
+//!   in [`Mdd::build`] is the multi-valued generalization of Bryant's reduce.
+//! - Srinivasan, A., Ham, T., Malik, S., & Brayton, R. K. (1990). Algorithms for
+//!   discrete function manipulation. *Proceedings of ICCAD 1990*, 92–95. The original
+//!   Multi-valued Decision Diagram paper, extending Bryant's BDD framework from binary
+//!   to multi-valued variable domains.
+//! - Knuth, D. E. (2011). *The Art of Computer Programming, Volume 4A*, §7.1.4.
+//!   Comprehensive textbook treatment of BDDs. Knuth carefully uses "equivalent" for
+//!   the node-merging relation and reserves "isomorphic" for graph isomorphism —
+//!   this module follows that convention.
+//! - Cheng, K. C. K., & Yap, R. H. C. (2010). [An MDD-based generalized arc
+//!   consistency algorithm for positive and negative table constraints and some global
+//!   constraints](https://www.comp.nus.edu.sg/~ryap/papers/cmdd.pdf). *Constraints*,
+//!   15(2), 265–304. Frames table constraints as MDDs and introduces the MDD-4R
+//!   algorithm used by [`Mdd::support`].
 
 // Targets and bounds are compared in `M`; the small `usize` level/remaining counts
 // and the `u32` exponent are widened or narrowed without meaningful loss for n ≤ 9.
