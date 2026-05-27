@@ -9,7 +9,6 @@ const chromiumExecutable = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH;
 export default defineConfig({
   testDir: './tests',
   timeout: 30000,
-  workers: 1,
   use: {
     baseURL: 'http://localhost:1420',
     browserName: 'chromium',
