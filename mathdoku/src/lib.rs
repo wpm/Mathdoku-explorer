@@ -13,8 +13,8 @@
 //!
 //! ## Entry points
 //!
-//! - **Generate** a random puzzle with [`generate()`] or [`generate::generate_with`]
-//!   (custom operation policy / cage-size distribution).
+//! - **Generate** a random puzzle with [`generate()`] or [`generate::generate_with`] (custom
+//!   operation policy / cage-size distribution).
 //! - **Construct** a puzzle programmatically with [`Puzzle::new`] and [`Puzzle::insert_cage`].
 //! - **Inspect** cell domains with [`Grid::cell_values`].
 //! - **Solve** with [`Grid::solutions`].

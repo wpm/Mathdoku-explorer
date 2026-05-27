@@ -11,7 +11,9 @@ use std::sync::{Mutex, PoisonError};
 use serde::{Deserialize, Serialize};
 use serde_json::{from_str, to_string, to_string_pretty};
 
-use mathdoku::{Cage, Cell, Grid, Operation, Operator, Polyomino, Puzzle, generate, generate_latin_square};
+use mathdoku::{
+    Cage, Cell, Grid, Operation, Operator, Polyomino, Puzzle, generate, generate_latin_square,
+};
 use mathdoku_designer_shared::{DocState, State};
 use tauri::{AppHandle, Manager, Runtime, State as TauriState};
 /// Serialization version written into every `.mathdoku` save file.
@@ -247,9 +249,7 @@ pub fn load_puzzle<R: Runtime>(
     }
     let puzzle = envelope.puzzle;
     let solution = envelope.solution;
-    let current = solution
-        .constrain(&puzzle)
-        .map_err(|e| e.to_string())?;
+    let current = solution.constrain(&puzzle).map_err(|e| e.to_string())?;
     let mut s = state.lock().map_err(|e| e.to_string())?;
     s.puzzle = Some(puzzle);
     s.solution = Some(solution);
@@ -345,7 +345,8 @@ pub fn add_region(
             .iter()
             .map(|&cell| {
                 let v = grid.cell_values(cell).ok()?;
-                v.is_singleton().then(|| v.values().first().copied().map(u64::from))?
+                v.is_singleton()
+                    .then(|| v.values().first().copied().map(u64::from))?
             })
             .collect()
     });

@@ -12,8 +12,8 @@ use std::collections::HashSet;
 use leptos::prelude::*;
 use mathdoku::Cell;
 
-use crate::geometry::origin;
 use super::puzzle::InteractionState;
+use crate::geometry::origin;
 
 use crate::theme::{ACCENT, PROVISIONAL_FILL, PROVISIONAL_STROKE};
 const SELECTION: f64 = 3.5;
@@ -25,17 +25,25 @@ pub fn ProvisionalFills() -> impl IntoView {
     #[allow(clippy::panic)]
     let ctx = use_context::<InteractionState>()
         .unwrap_or_else(|| panic!("ProvisionalFills must be inside Puzzle"));
-    let InteractionState { designer_state, cell_size: cell, .. } = ctx;
+    let InteractionState {
+        designer_state,
+        cell_size: cell,
+        ..
+    } = ctx;
 
     move || {
         use leptos::prelude::IntoAny;
         let st = designer_state.get();
-        st.provisional_cages.iter().flat_map(|region| {
-            region.cells().into_iter().map(move |c| {
-                let (x, y) = origin(cell, c.row, c.column);
-                view! { <rect x=x y=y width=cell height=cell fill=PROVISIONAL_FILL /> }.into_any()
+        st.provisional_cages
+            .iter()
+            .flat_map(|region| {
+                region.cells().into_iter().map(move |c| {
+                    let (x, y) = origin(cell, c.row, c.column);
+                    view! { <rect x=x y=y width=cell height=cell fill=PROVISIONAL_FILL /> }
+                        .into_any()
+                })
             })
-        }).collect::<Vec<_>>()
+            .collect::<Vec<_>>()
     }
 }
 

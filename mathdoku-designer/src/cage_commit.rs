@@ -23,8 +23,9 @@ extern "C" {
 /// On success, pushes the pre-commit state onto `undo_stack`, clears `redo_stack`,
 /// restores `parked` provisional cages into the new state, and calls `on_puzzle_change`.
 /// On IPC error, calls `on_error`.
+#[allow(clippy::too_many_arguments)]
 pub fn commit_cage(
-    polyomino: Polyomino,
+    polyomino: &Polyomino,
     operator: Operator,
     parked: BTreeSet<Polyomino>,
     undo_stack: RwSignal<Vec<State>>,
@@ -40,7 +41,10 @@ pub fn commit_cage(
     }
     let cells = polyomino.cells();
     spawn_local(async move {
-        let args = to_value(&AddRegionArgs { cells: cells.clone(), operator });
+        let args = to_value(&AddRegionArgs {
+            cells: cells.clone(),
+            operator,
+        });
         let Ok(args) = args else { return };
         let result = invoke("add_region", args).await;
         if let Some(e) = result.as_string() {
@@ -55,7 +59,7 @@ pub fn commit_cage(
         new_st.provisional_cages = parked;
         new_st.active = pre_commit.active;
         undo_stack.update(|s| s.push(pre_commit));
-        redo_stack.update(|s| s.clear());
+        redo_stack.update(std::vec::Vec::clear);
         designer_state.set(new_st.clone());
         on_puzzle_change.run(new_st);
     });
@@ -81,24 +85,32 @@ pub fn demote_cage(
         cells: Vec<Cell>,
     }
     spawn_local(async move {
-        let Ok(args) = to_value(&RemoveRegionArgs { cells: cells.clone() }) else { return };
+        let Ok(args) = to_value(&RemoveRegionArgs {
+            cells: cells.clone(),
+        }) else {
+            return;
+        };
         let result = invoke("remove_region", args).await;
         if let Some(e) = result.as_string() {
             on_error.run(e);
             return;
         }
-        let Ok(mut new_st) = from_value::<State>(result) else { return };
+        let Ok(mut new_st) = from_value::<State>(result) else {
+            return;
+        };
         let pre_demote = designer_state.get_untracked();
         // Add the demoted cage as a provisional cage in the new state.
-        let poly = match Polyomino::from_cells(&cells) {
-            Ok(p) => p,
-            Err(_) => { on_error.run("invalid polyomino".into()); return; }
+        let Ok(poly) = Polyomino::from_cells(&cells) else {
+            on_error.run("invalid polyomino".into());
+            return;
         };
-        new_st.provisional_cages = pre_demote.provisional_cages.clone();
+        new_st
+            .provisional_cages
+            .clone_from(&pre_demote.provisional_cages);
         new_st.provisional_cages.insert(poly.clone());
         new_st.active = pre_demote.active;
         undo_stack.update(|s| s.push(pre_demote));
-        redo_stack.update(|s| s.clear());
+        redo_stack.update(std::vec::Vec::clear);
         designer_state.set(new_st.clone());
         on_puzzle_change.run(new_st);
         on_open_selector.run(poly);

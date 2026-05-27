@@ -10,9 +10,9 @@
 use leptos::prelude::*;
 use mathdoku::{Operation, Operator, Polyomino};
 
-use crate::partial_solution::PartialSolution;
 use super::puzzle::InteractionState;
 use crate::geometry::{anchor, origin};
+use crate::partial_solution::PartialSolution;
 use crate::theme::{ACCENT, BG, INK, LINE, SERIF};
 
 /// Floating tab well rendered over the anchor cell of the pending cage.
@@ -38,7 +38,7 @@ pub fn OperationSelector() -> impl IntoView {
         let a = anchor(&pending.polyomino.cells());
         let (x, y) = origin(cell_size, a.row, a.column);
 
-        let tab_w = cell_size.min(56.0).max(44.0);
+        let tab_w = cell_size.clamp(44.0, 56.0);
         let tab_h = 28.0;
         let pad = 4.0;
         let gap = 2.0;
@@ -51,19 +51,22 @@ pub fn OperationSelector() -> impl IntoView {
         // omit any operator for which compute_target returns None (e.g. Divide
         // on non-divisible values). When domains are undetermined, show all
         // allowed operators with a label of just the operator symbol.
-        let all_determined = polyomino.cells().iter().all(|&c| {
-            partial_solution.cell_value_singleton(c).is_some()
-        });
-        let ops: Vec<(Operator, String)> = pending.allowed.iter()
+        let all_determined = polyomino
+            .cells()
+            .iter()
+            .all(|&c| partial_solution.cell_value_singleton(c).is_some());
+        let ops: Vec<(Operator, String)> = pending
+            .allowed
+            .iter()
             .filter_map(|op| {
                 let target = compute_target(&polyomino, op, &partial_solution);
                 if all_determined && target.is_none() {
                     return None; // structurally invalid for these cell values
                 }
-                let label = match target {
-                    Some(t) => Operation::new(op.clone(), t).to_string(),
-                    None    => op.to_string(),
-                };
+                let label = target.map_or_else(
+                    || op.to_string(),
+                    |t| Operation::new(op.clone(), t).to_string(),
+                );
                 Some((op.clone(), label))
             })
             .collect();
@@ -85,11 +88,11 @@ pub fn OperationSelector() -> impl IntoView {
                 />
                 // Operator tabs
                 {ops.into_iter().enumerate().map(|(i, (op, label))| {
-                    let tab_x = x + pad + (tab_w + gap) * i as f64;
+                    let tab_x = (tab_w + gap).mul_add(i as f64, x + pad);
                     let tab_y = y + pad;
                     let tx = tab_x + tab_w / 2.0;
                     let ty = tab_y + tab_h / 2.0;
-                    let on_commit = on_commit;
+
                     view! {
                         <g
                             style="cursor:pointer;"
@@ -136,7 +139,11 @@ pub struct PendingCommit {
 
 /// Computes the target value for `op` applied to `polyomino`'s cells using the solution
 /// values read from `partial_solution`. Returns `None` if any cell's domain is not a singleton.
-fn compute_target(polyomino: &Polyomino, op: &Operator, partial_solution: &PartialSolution) -> Option<u64> {
+fn compute_target(
+    polyomino: &Polyomino,
+    op: &Operator,
+    partial_solution: &PartialSolution,
+) -> Option<u64> {
     let vals: Vec<u64> = polyomino
         .cells()
         .iter()
@@ -158,7 +165,9 @@ fn compute_target(polyomino: &Polyomino, op: &Operator, partial_solution: &Parti
         Operator::Divide => {
             let hi = vals[0].max(vals[1]);
             let lo = vals[0].min(vals[1]);
-            if lo == 0 || hi % lo != 0 { return None; }
+            if lo == 0 || !hi.is_multiple_of(lo) {
+                return None;
+            }
             hi / lo
         }
     })
@@ -228,13 +237,9 @@ pub fn handle_key(
             pending.on_commit.run(op);
             true
         }
-        key_str => {
-            if let Some(op) = key_to_operator(key_str, &pending.allowed) {
-                pending.on_commit.run(op);
-                true
-            } else {
-                false
-            }
-        }
+        key_str => key_to_operator(key_str, &pending.allowed).is_some_and(|op| {
+            pending.on_commit.run(op);
+            true
+        }),
     }
 }

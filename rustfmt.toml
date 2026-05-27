@@ -1,4 +1,1 @@
-unstable_features = true   # required for wrap_comments
-wrap_comments = true
-comment_width = 100        # match max_width
 max_width = 100

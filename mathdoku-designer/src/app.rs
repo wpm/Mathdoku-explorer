@@ -437,8 +437,8 @@ pub fn App() -> impl IntoView {
                     Ok(Some(st)) => {
                         let ds = get_doc_state().await;
                         current_path.set(ds.path);
-                        undo_stack.update(|s| s.clear());
-                        redo_stack.update(|s| s.clear());
+                        undo_stack.update(std::vec::Vec::clear);
+                        redo_stack.update(std::vec::Vec::clear);
                         pending_commit.set(None);
                         designer_state.set(Some(st));
                     }
@@ -463,8 +463,8 @@ pub fn App() -> impl IntoView {
             match call_latin_square_puzzle(n).await {
                 Ok(st) => {
                     current_path.set(None);
-                    undo_stack.update(|s| s.clear());
-                    redo_stack.update(|s| s.clear());
+                    undo_stack.update(std::vec::Vec::clear);
+                    redo_stack.update(std::vec::Vec::clear);
                     pending_commit.set(None);
                     designer_state.set(Some(st));
                 }

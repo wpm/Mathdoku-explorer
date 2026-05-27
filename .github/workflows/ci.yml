@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTDOCFLAGS: "-D warnings"
+
+jobs:
+  # ── Checks (mirrors .githooks/pre-commit) ──────────────────────────────────
+  checks:
+    name: Checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry & build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      # ── fmt ──────────────────────────────────────────────────────────────
+      - name: cargo fmt (mathdoku)
+        run: cargo fmt --all -- --check
+
+      - name: cargo fmt (mathdoku-designer)
+        run: cd mathdoku-designer && cargo fmt --all -- --check
+
+      # ── clippy ───────────────────────────────────────────────────────────
+      - name: cargo clippy (mathdoku)
+        run: |
+          cargo clippy --all-targets -- \
+            -D warnings \
+            -D clippy::all \
+            -D clippy::pedantic \
+            -D clippy::nursery \
+            -D clippy::unwrap_used \
+            -D clippy::expect_used \
+            -D clippy::panic \
+            -D clippy::todo \
+            -D clippy::unimplemented \
+            -D clippy::dbg_macro \
+            -D clippy::print_stdout \
+            -D clippy::print_stderr \
+            -A clippy::must_use_candidate
+
+      - name: cargo clippy (mathdoku-designer)
+        run: cd mathdoku-designer && cargo clippy --all-targets
+
+      # ── doc ──────────────────────────────────────────────────────────────
+      - name: cargo doc
+        run: cargo doc --no-deps
+
+      # ── tests ─────────────────────────────────────────────────────────────
+      - name: cargo test (mathdoku)
+        run: cargo test --lib
+
+      - name: cargo test (mathdoku-designer)
+        run: cd mathdoku-designer && cargo test
+
+  # ── Cross-platform release builds (main only) ──────────────────────────────
+  build:
+    name: Build (${{ matrix.target }})
+    if: github.ref == 'refs/heads/main'
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compiler (aarch64-unknown-linux-gnu)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Cache cargo registry & build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: cargo build --release
+        run: cargo build --release --target ${{ matrix.target }}
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc

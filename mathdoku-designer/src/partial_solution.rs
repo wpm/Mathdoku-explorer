@@ -20,6 +20,7 @@ struct PartialSolutionInner {
 }
 
 impl PartialSolution {
+    #[must_use]
     pub fn new(puzzle: Puzzle, grid: Grid) -> Self {
         Self(Arc::new(PartialSolutionInner {
             puzzle: Mutex::new(puzzle),
@@ -52,9 +53,11 @@ impl PartialSolution {
     }
 
     /// Returns the singleton solution value for `cell`, or `None` if not a singleton.
+    #[must_use]
     pub fn cell_value_singleton(&self, cell: Cell) -> Option<u8> {
         let grid = self.lock_grid();
         let v = grid.cell_values(cell).ok()?;
+        drop(grid);
         v.is_singleton().then(|| v.values().first().copied())?
     }
 
@@ -62,6 +65,7 @@ impl PartialSolution {
     ///
     /// Counts are computed by propagating all cage constraints forward from an
     /// unconstrained grid, so they reflect every cage currently on the puzzle.
+    #[must_use]
     pub fn viable_counts(&self, cage_idx: usize) -> Option<(usize, usize)> {
         let puzzle = self.lock_puzzle();
         let cage = puzzle.cages().nth(cage_idx)?;
@@ -69,6 +73,7 @@ impl PartialSolution {
         // Propagate all cage constraints from a fresh unconstrained grid.
         let propagated = Grid::new(n).ok()?.constrain(&puzzle).ok()?;
         let tuples = propagated.cage_tuples(&puzzle, cage).ok()?;
+        drop(puzzle);
         let multisets: HashSet<Vec<u8>> = tuples
             .iter()
             .map(|t| {
@@ -81,6 +86,7 @@ impl PartialSolution {
     }
 
     /// Returns the cage index for the cell at `(r, c)`, or `None` if uncovered.
+    #[must_use]
     pub fn cage_index_at(&self, r: usize, c: usize) -> Option<usize> {
         let cell = Cell::new(r, c);
         let puzzle = self.lock_puzzle();

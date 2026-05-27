@@ -206,10 +206,7 @@ mod tests {
             .unwrap();
         // This cage shares cell (0,0) with the existing cage but has a different polyomino.
         let overlapping = cage_at(&[(0, 0)], Given, 1);
-        assert!(matches!(
-            p.insert_cage(overlapping),
-            Err(RegionConflict(_))
-        ));
+        assert!(matches!(p.insert_cage(overlapping), Err(RegionConflict(_))));
     }
 
     #[test]

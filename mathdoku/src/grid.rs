@@ -81,7 +81,10 @@ impl Grid {
         let i = self.index(cell)?;
         let mut new_values = self.values;
         new_values[i] = values;
-        Ok(Self { n: self.n, values: new_values })
+        Ok(Self {
+            n: self.n,
+            values: new_values,
+        })
     }
 
     /// Creates a `Grid` whose cell domains are the singleton values from `square`.

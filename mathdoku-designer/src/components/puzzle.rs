@@ -20,12 +20,14 @@ use wasm_bindgen::prelude::*;
 use super::cage::Cage as CageComponent;
 use super::cage_stats::CageStats;
 use super::cell::Cell as CellComponent;
-use crate::cage_commit::{commit_cage, demote_cage};
-use crate::geometry::{MARGIN, THICK, THIN, anchor, assign_colors, cell_size, is_thick, op_font, origin};
-use crate::partial_solution::PartialSolution;
-use super::operation_selector::{handle_key, OperationSelector, PendingCommit};
+use super::operation_selector::{OperationSelector, PendingCommit, handle_key};
 use super::selection::{ProvisionalFills, SelectionOverlay};
 use super::solution_count::SolutionCount;
+use crate::cage_commit::{commit_cage, demote_cage};
+use crate::geometry::{
+    MARGIN, THICK, THIN, anchor, assign_colors, cell_size, is_thick, op_font, origin,
+};
+use crate::partial_solution::PartialSolution;
 
 use crate::keys::{ARROW_DOWN, ARROW_LEFT, ARROW_RIGHT, ARROW_UP, ENTER, ESCAPE, TAB};
 use crate::theme::{BG, CAGE_PALETTE, INK, LINE, OP_INSET};
@@ -47,7 +49,8 @@ pub fn Puzzle(
     let top_margin = 2.0f64.mul_add(OP_INSET, op_f);
 
     // Collect cages in polyomino order (canonical for Tab traversal).
-    let cages: CageList = state.puzzle
+    let cages: CageList = state
+        .puzzle
         .cages()
         .map(|cage| (cage.cells(), cage.clone()))
         .collect();
@@ -127,7 +130,8 @@ pub fn Puzzle(
         }
         let st = designer_state.get_untracked();
         let poly_for_cb = poly.clone();
-        let parked: std::collections::BTreeSet<Polyomino> = st.provisional_cages
+        let parked: std::collections::BTreeSet<Polyomino> = st
+            .provisional_cages
             .iter()
             .filter(|p| p.cells() != poly.cells())
             .cloned()
@@ -135,19 +139,31 @@ pub fn Puzzle(
         let on_commit = Callback::new(move |op: Operator| {
             pending_commit.set(None);
             commit_cage(
-                poly_for_cb.clone(), op,
-                parked.clone(), undo_stack, redo_stack,
-                designer_state, on_puzzle_change, on_error,
+                &poly_for_cb,
+                op,
+                parked.clone(),
+                undo_stack,
+                redo_stack,
+                designer_state,
+                on_puzzle_change,
+                on_error,
             );
         });
         let selected_idx = RwSignal::new(0usize);
-        pending_commit.set(Some(PendingCommit { polyomino: poly, allowed, selected_idx, on_commit }));
+        pending_commit.set(Some(PendingCommit {
+            polyomino: poly,
+            allowed,
+            selected_idx,
+            on_commit,
+        }));
     });
 
     // Helper: swap the undo/redo stacks and apply the restored state.
     let apply_history = move |from: RwSignal<Vec<State>>, to: RwSignal<Vec<State>>| {
         if let Some(restored) = from.get_untracked().last().cloned() {
-            from.update(|s| { s.pop(); });
+            from.update(|s| {
+                s.pop();
+            });
             to.update(|s| s.push(designer_state.get_untracked()));
             on_state_change.run(restored.clone());
             on_puzzle_change.run(restored.clone());
@@ -164,7 +180,14 @@ pub fn Puzzle(
         // Operation selector intercepts all keys when active.
         if let Some(p) = pending_commit.get_untracked() {
             ev.prevent_default();
-            handle_key(key.as_str(), shift, &p, pending_commit, designer_state, on_state_change);
+            handle_key(
+                key.as_str(),
+                shift,
+                &p,
+                pending_commit,
+                designer_state,
+                on_state_change,
+            );
             return;
         }
 
@@ -211,19 +234,31 @@ pub fn Puzzle(
         match key.as_str() {
             ARROW_UP if r > 0 => {
                 ev.prevent_default();
-                set_state(State { active: Cell::new(r - 1, c), ..st });
+                set_state(State {
+                    active: Cell::new(r - 1, c),
+                    ..st
+                });
             }
             ARROW_DOWN if r + 1 < n => {
                 ev.prevent_default();
-                set_state(State { active: Cell::new(r + 1, c), ..st });
+                set_state(State {
+                    active: Cell::new(r + 1, c),
+                    ..st
+                });
             }
             ARROW_LEFT if c > 0 => {
                 ev.prevent_default();
-                set_state(State { active: Cell::new(r, c - 1), ..st });
+                set_state(State {
+                    active: Cell::new(r, c - 1),
+                    ..st
+                });
             }
             ARROW_RIGHT if c + 1 < n => {
                 ev.prevent_default();
-                set_state(State { active: Cell::new(r, c + 1), ..st });
+                set_state(State {
+                    active: Cell::new(r, c + 1),
+                    ..st
+                });
             }
             ARROW_UP | ARROW_DOWN | ARROW_LEFT | ARROW_RIGHT => {
                 ev.prevent_default(); // at boundary — consume but don't move
@@ -237,11 +272,18 @@ pub fn Puzzle(
                         .position(|cells| cells.contains(&here))
                         .unwrap_or(0);
                     let next_cage = if shift {
-                        if current_cage == 0 { num_cages - 1 } else { current_cage - 1 }
+                        if current_cage == 0 {
+                            num_cages - 1
+                        } else {
+                            current_cage - 1
+                        }
                     } else {
                         (current_cage + 1) % num_cages
                     };
-                    set_state(State { active: anchor(&cage_cells_static[next_cage]), ..st });
+                    set_state(State {
+                        active: anchor(&cage_cells_static[next_cage]),
+                        ..st
+                    });
                 }
             }
             ESCAPE => {
@@ -251,10 +293,17 @@ pub fn Puzzle(
                     // Active cell is in a committed cage — demote it to provisional.
                     let cells = cage_cells_static[cage_idx].clone();
                     demote_cage(
-                        cells, undo_stack, redo_stack,
-                        designer_state, on_puzzle_change, open_selector, on_error,
+                        cells,
+                        undo_stack,
+                        redo_stack,
+                        designer_state,
+                        on_puzzle_change,
+                        open_selector,
+                        on_error,
                     );
-                } else if let Some(poly) = st.provisional_cages.iter()
+                } else if let Some(poly) = st
+                    .provisional_cages
+                    .iter()
                     .find(|p| p.cells().contains(&active_cell))
                     .cloned()
                 {
@@ -268,7 +317,8 @@ pub fn Puzzle(
                 ev.prevent_default();
                 let active_cell = Cell::new(r, c);
                 // Cells to commit: active provisional cage, or a fresh singleton.
-                let poly = if let Some(p) = st.provisional_cages
+                let poly = if let Some(p) = st
+                    .provisional_cages
                     .iter()
                     .find(|p| p.cells().contains(&active_cell))
                     .cloned()
@@ -278,19 +328,28 @@ pub fn Puzzle(
                     if partial_solution.cage_index_at(r, c).is_some() {
                         return; // covered cell, nothing to do
                     }
-                    Polyomino::from_cells(&[active_cell]).expect("singleton is always valid")
+                    let Ok(p) = Polyomino::from_cells(&[active_cell]) else {
+                        return; // should never happen for a single cell
+                    };
+                    p
                 };
                 // Singleton: Given is the only operator — commit immediately.
                 if operators(&poly) == [Operator::Given] {
-                    let parked: std::collections::BTreeSet<Polyomino> = st.provisional_cages
+                    let parked: std::collections::BTreeSet<Polyomino> = st
+                        .provisional_cages
                         .iter()
                         .filter(|p| p.cells() != poly.cells())
                         .cloned()
                         .collect();
                     commit_cage(
-                        poly, Operator::Given,
-                        parked, undo_stack, redo_stack,
-                        designer_state, on_puzzle_change, on_error,
+                        &poly,
+                        Operator::Given,
+                        parked,
+                        undo_stack,
+                        redo_stack,
+                        designer_state,
+                        on_puzzle_change,
+                        on_error,
                     );
                     return;
                 }
@@ -431,19 +490,14 @@ type CageList = Vec<(Vec<Cell>, Cage)>;
 /// extends it to include `(tr, tc)`, and returns the updated `State`.
 /// If `(r, c)` is disconnected from every existing provisional cage, the active
 /// one is left as-is and a new singleton is started.
-fn step_provisional_cage(
-    r: usize,
-    c: usize,
-    tr: usize,
-    tc: usize,
-    state: State,
-) -> State {
+fn step_provisional_cage(r: usize, c: usize, tr: usize, tc: usize, state: State) -> State {
     use std::collections::BTreeSet;
     let current = Cell::new(r, c);
     let target = Cell::new(tr, tc);
 
     // Find the provisional cage that contains (or is adjacent to) current.
-    let active = state.provisional_cages
+    let active = state
+        .provisional_cages
         .iter()
         .find(|p| p.cells().contains(&current))
         .cloned();
@@ -451,24 +505,28 @@ fn step_provisional_cage(
     let (region, mut remaining): (Polyomino, BTreeSet<Polyomino>) = match active {
         None => {
             // No region contains current — start a new singleton.
-            let new_region = Polyomino::from_cells(&[current]).expect("singleton is always valid");
+            let Ok(new_region) = Polyomino::from_cells(&[current]) else {
+                return state;
+            };
             (new_region, state.provisional_cages.clone())
         }
         Some(poly) => {
-            let rest: BTreeSet<Polyomino> = state.provisional_cages
+            let rest: BTreeSet<Polyomino> = state
+                .provisional_cages
                 .iter()
                 .filter(|p| *p != &poly)
                 .cloned()
                 .collect();
-            match poly.insert(current) {
-                Ok(extended) => (extended, rest),
-                Err(_) => {
-                    // Current cell disconnected from this cage — park it and start fresh.
-                    let mut parked = rest;
-                    parked.insert(poly);
-                    let new_region = Polyomino::from_cells(&[current]).expect("singleton is always valid");
-                    (new_region, parked)
-                }
+            if let Ok(extended) = poly.insert(current) {
+                (extended, rest)
+            } else {
+                // Current cell disconnected from this cage — park it and start fresh.
+                let mut parked = rest;
+                parked.insert(poly);
+                let Ok(new_region) = Polyomino::from_cells(&[current]) else {
+                    return state;
+                };
+                (new_region, parked)
             }
         }
     };
@@ -483,4 +541,3 @@ fn step_provisional_cage(
         ..state
     }
 }
-

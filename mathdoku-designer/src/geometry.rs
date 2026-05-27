@@ -4,7 +4,7 @@
     clippy::cast_precision_loss,
     clippy::cast_sign_loss,
     clippy::cast_possible_truncation,
-    unused_results,
+    unused_results
 )]
 
 use std::collections::HashSet;
@@ -16,17 +16,20 @@ pub const THICK: f64 = 2.2;
 pub const THIN: f64 = 0.5;
 
 /// Returns the cell side length in SVG units for an *n*×*n* grid.
+#[must_use]
 pub fn cell_size(n: usize) -> f64 {
     let viewport = 600.0_f64;
     2.0f64.mul_add(-MARGIN, viewport) / (n as f64).max(1.0)
 }
 
 /// Returns the cage-label font size for a given cell side length.
+#[must_use]
 pub fn op_font(cell: f64) -> f64 {
     (cell * 0.16).max(10.0)
 }
 
 /// Returns the SVG `(x, y)` top-left corner of the cell at `(row, col)`.
+#[must_use]
 pub const fn origin(cell: f64, row: usize, col: usize) -> (f64, f64) {
     (
         (col as f64).mul_add(cell, MARGIN),
@@ -35,6 +38,7 @@ pub const fn origin(cell: f64, row: usize, col: usize) -> (f64, f64) {
 }
 
 /// Returns the anchor cell of a cage: the topmost cell in the leftmost column.
+#[must_use]
 pub fn anchor(cells: &[Cell]) -> Cell {
     cells
         .iter()
@@ -44,16 +48,15 @@ pub fn anchor(cells: &[Cell]) -> Cell {
 }
 
 fn neighbors(cell: Cell, n: usize) -> impl Iterator<Item = Cell> {
-    cell.neighbors_4().filter(move |c| c.row < n && c.column < n)
+    cell.neighbors_4()
+        .filter(move |c| c.row < n && c.column < n)
 }
 
 /// Assigns palette colors to cages so adjacent cages get different colors.
 /// Returns `(colors, cage_index)` where `cage_index[r][c]` is the cage index
 /// for the cell at `(r, c)`, or `None` if uncovered.
-pub fn assign_colors(
-    n: usize,
-    cages: &[Vec<Cell>],
-) -> (Vec<usize>, Vec<Vec<Option<usize>>>) {
+#[must_use]
+pub fn assign_colors(n: usize, cages: &[Vec<Cell>]) -> (Vec<usize>, Vec<Vec<Option<usize>>>) {
     let mut cage_index = vec![vec![None::<usize>; n]; n];
     for (i, cells) in cages.iter().enumerate() {
         for &cell in cells {
@@ -81,11 +84,12 @@ pub fn assign_colors(
     (color, cage_index)
 }
 
+#[must_use]
 pub const fn is_thick(a: Option<usize>, b: Option<usize>) -> bool {
     match (a, b) {
         (Some(x), Some(y)) => x != y, // boundary between two different cages
-        (None, None) => false,         // boundary between two uncaged cells
-        _ => true,                     // boundary between a caged and uncaged cell
+        (None, None) => false,        // boundary between two uncaged cells
+        _ => true,                    // boundary between a caged and uncaged cell
     }
 }
 
@@ -199,7 +203,11 @@ mod tests {
 
     #[test]
     fn assign_colors_non_adjacent_cages_differ_from_their_neighbors() {
-        let cages = vec![vec![Cell::new(0, 0)], vec![Cell::new(0, 1)], vec![Cell::new(0, 2)]];
+        let cages = vec![
+            vec![Cell::new(0, 0)],
+            vec![Cell::new(0, 1)],
+            vec![Cell::new(0, 2)],
+        ];
         let (colors, _) = assign_colors(4, &cages);
         assert_ne!(colors[0], colors[1]);
         assert_ne!(colors[1], colors[2]);
