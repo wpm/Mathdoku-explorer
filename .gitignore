@@ -5,4 +5,3 @@ package-lock.json
 test-results/
 dist/
 docs/
-adr/
