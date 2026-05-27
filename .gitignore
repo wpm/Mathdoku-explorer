@@ -1,6 +1,7 @@
 target/
 gen/
 node_modules/
+package-lock.json
 test-results/
 dist/
 docs/
