@@ -1,14 +1,12 @@
 //! The [`Grid`] type: an `n×n` grid of cell values.
 
-#![allow(clippy::cast_possible_truncation)] // n is validated to 1..=9 in Grid::new
-
 use serde::de::Error as DeError;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::Error::InvalidGridSize;
 use crate::cage::Cage;
 use crate::puzzle::Puzzle;
-use crate::{Cell, Error, N, Tuple, Values};
+use crate::{Cell, Error, Tuple, Value, Values};
 
 // Serde wire format: flat struct with an n×n `values` array of cell value sets.
 // `values` is optional on deserialization; absent means full value sets for all cells.
@@ -68,7 +66,7 @@ impl Grid {
     ///
     /// # Errors
     /// Returns [`Error::InvalidCell`] if `cell` is outside the grid.
-    pub(crate) fn set_cell_value(&self, cell: Cell, n: N) -> Result<Self, Error> {
+    pub(crate) fn set_cell_value(&self, cell: Cell, n: Value) -> Result<Self, Error> {
         self.set_values(cell, Values::singleton(n))
     }
 
@@ -93,7 +91,7 @@ impl Grid {
     /// # Errors
     /// Returns [`InvalidGridSize`] if `square.len() != n` or any row has length ≠ `n`,
     /// and [`Error::InvalidValue`] if any value is outside `1..=n`.
-    pub fn from_latin_square(n: usize, square: &[Vec<N>]) -> Result<Self, Error> {
+    pub fn from_latin_square(n: usize, square: &[Vec<Value>]) -> Result<Self, Error> {
         let mut grid = Self::new(n)?;
         for (r, row) in square.iter().enumerate() {
             for (c, &v) in row.iter().enumerate() {
@@ -104,7 +102,7 @@ impl Grid {
         Ok(grid)
     }
 
-    fn singleton_values(v: N) -> Values {
+    fn singleton_values(v: Value) -> Values {
         Values::singleton(v)
     }
 
@@ -183,9 +181,8 @@ impl Grid {
         if !puzzle.cages().any(|c| c == cage) {
             return Err(Error::InvalidCage(cage.clone()));
         }
-        let n = self.n as N;
         Ok(cage
-            .mdd(n)
+            .mdd(self.n)
             .tuples()
             .filter(|tuple| {
                 tuple
@@ -214,7 +211,7 @@ impl Grid {
         if !puzzle.cages().any(|c| c == cage) {
             return Err(Error::InvalidCage(cage.clone()));
         }
-        let tuples: Vec<_> = cage.mdd(self.n as N).tuples().collect();
+        let tuples: Vec<_> = cage.mdd(self.n).tuples().collect();
         let tuple = tuples
             .get(index)
             .ok_or(Error::InvalidTupleIndex(index, tuples.len()))?;
@@ -289,13 +286,13 @@ mod tests {
     use serde_json::{Value, from_str, json, to_string};
 
     use super::*;
-    use crate::M;
+    use crate::Target;
     use crate::cage::Cage;
     use crate::operation::Operator::{Add, Divide, Given};
     use crate::operation::{Operation, Operator};
     use crate::polyomino::Polyomino;
 
-    fn cage_at(positions: &[(usize, usize)], operator: Operator, target: M) -> Cage {
+    fn cage_at(positions: &[(usize, usize)], operator: Operator, target: Target) -> Cage {
         let cells: Vec<Cell> = positions.iter().map(|&(r, c)| Cell::new(r, c)).collect();
         let poly = Polyomino::from_cells(&cells).unwrap();
         Cage::new(poly, Operation::new(operator, target))
@@ -305,7 +302,7 @@ mod tests {
         n: usize,
         positions: &[(usize, usize)],
         operator: Operator,
-        target: M,
+        target: Target,
     ) -> Puzzle {
         let cage = cage_at(positions, operator, target);
         Puzzle::new(n).unwrap().insert_cage(cage).unwrap()
@@ -744,7 +741,7 @@ mod tests {
         let tuples = g.cage_tuples(&puzzle, &cage).unwrap();
         assert!(!tuples.is_empty());
         for t in &tuples {
-            let sum: M = t.iter().map(|&v| M::from(v)).sum();
+            let sum: Target = t.iter().map(|&v| Target::from(v)).sum();
             assert_eq!(sum, 3);
         }
     }

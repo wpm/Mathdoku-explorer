@@ -14,7 +14,7 @@
     unused_results,                  // quit_app discards its fire-and-forget JsValue
 )]
 
-use mathdoku::{Cell, M, Operator};
+use mathdoku::{Cell, Operator, Target};
 use mathdoku_designer_shared::{DocState, SaveResult, State};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -73,7 +73,7 @@ struct InsertCageArgs {
     operator: Operator,
     /// `Some` in Without-Solution mode (author-chosen target); `None` in
     /// With-Solution mode (the backend derives the target from the solution).
-    target: Option<M>,
+    target: Option<Target>,
 }
 
 #[derive(Serialize)]
@@ -166,7 +166,7 @@ pub async fn set_active_cell(active: Cell) -> Result<(), IpcError> {
 pub async fn insert_cage(
     cells: Vec<Cell>,
     operator: Operator,
-    target: Option<M>,
+    target: Option<Target>,
 ) -> Result<State, IpcError> {
     call(
         "insert_cage",

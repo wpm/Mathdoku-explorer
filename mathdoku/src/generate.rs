@@ -13,7 +13,7 @@ use rand::{Rng, RngExt};
 use crate::Cell;
 use crate::Error;
 use crate::cage::Cage;
-use crate::cell::{M, N};
+use crate::cell::{Target, Value};
 use crate::latin_square::generate_latin_square;
 use crate::operation::{Operation, Operator};
 use crate::polyomino::Polyomino;
@@ -78,26 +78,26 @@ fn poisson<R: Rng>(mean: f64, rng: &mut R) -> usize {
 /// Returns [`Error::EmptyOpPolicyValues`] if `values` is empty. A cage always
 /// covers at least one cell, so callers that obtain `values` from a cage's
 /// cells will never trigger this.
-pub fn default_op_policy(values: &[N], n: usize) -> Result<Operation, Error> {
+pub fn default_op_policy(values: &[Value], n: usize) -> Result<Operation, Error> {
     let op = |operator, target| Ok(Operation::new(operator, target));
     match values.len() {
         0 => Err(Error::EmptyOpPolicyValues),
-        1 => op(Operator::Given, M::from(values[0])),
+        1 => op(Operator::Given, Target::from(values[0])),
         2 => {
             let (hi, lo) = (values[0].max(values[1]), values[0].min(values[1]));
             if hi.is_multiple_of(lo) {
-                op(Operator::Divide, M::from(hi / lo))
+                op(Operator::Divide, Target::from(hi / lo))
             } else {
-                op(Operator::Subtract, M::from(hi - lo))
+                op(Operator::Subtract, Target::from(hi - lo))
             }
         }
         _ => {
-            let prod: M = values.iter().map(|&v| M::from(v)).product();
-            let area = M::try_from(n * n).unwrap_or(M::MAX);
+            let prod: Target = values.iter().map(|&v| Target::from(v)).product();
+            let area = Target::try_from(n * n).unwrap_or(Target::MAX);
             if prod <= area {
                 op(Operator::Multiply, prod)
             } else {
-                op(Operator::Add, values.iter().map(|&v| M::from(v)).sum())
+                op(Operator::Add, values.iter().map(|&v| Target::from(v)).sum())
             }
         }
     }
@@ -131,14 +131,14 @@ pub fn generate_with<R: Rng, F>(
     sizes: SizeDistribution,
 ) -> Result<Puzzle, Error>
 where
-    F: Fn(&[N], usize) -> Result<Operation, Error>,
+    F: Fn(&[Value], usize) -> Result<Operation, Error>,
 {
     let mut puzzle = Puzzle::new(n)?;
     let latin_square = generate_latin_square(n, rng);
     let tiling = greedy(n, sizes, rng)?;
 
     for polyomino in tiling {
-        let values: Vec<N> = polyomino
+        let values: Vec<Value> = polyomino
             .cells()
             .into_iter()
             .map(|cell| latin_square[cell.row][cell.column])
@@ -234,7 +234,7 @@ mod tests {
         }
     }
 
-    fn op(operator: Operator, target: M) -> Operation {
+    fn op(operator: Operator, target: Target) -> Operation {
         Operation::new(operator, target)
     }
 

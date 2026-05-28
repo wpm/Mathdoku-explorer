@@ -20,12 +20,12 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
 
-use mathdoku::{Cage, Cell, Grid, M, Operation, Operator, Polyomino, Puzzle, operators};
+use mathdoku::{Cage, Cell, Grid, Operation, Operator, Polyomino, Puzzle, Target, operators};
 
 /// Products above this ceiling are never offered as `Multiply` targets. No
 /// realistic cage in an `n ≤ 9` grid has a larger product, and the bound keeps
 /// the candidate enumeration finite for pathologically large cages.
-const MAX_PRODUCT: M = 1_000_000_000;
+const MAX_PRODUCT: Target = 1_000_000_000;
 
 /// Returns `true` if the puzzle extended with `candidate` has at least one
 /// global completion.
@@ -53,7 +53,7 @@ pub fn is_globally_feasible(puzzle: &Puzzle, candidate: &Cage) -> bool {
 /// candidate targets are a tight superset derived by reachability, so the only
 /// pairs returned are the ones that actually admit a completion.
 #[must_use]
-pub fn feasible_op_targets(puzzle: &Puzzle, polyomino: &Polyomino) -> Vec<(Operator, M)> {
+pub fn feasible_op_targets(puzzle: &Puzzle, polyomino: &Polyomino) -> Vec<(Operator, Target)> {
     let n = puzzle.n();
     let k = polyomino.len();
     let mut out = Vec::new();
@@ -73,8 +73,8 @@ pub fn feasible_op_targets(puzzle: &Puzzle, polyomino: &Polyomino) -> Vec<(Opera
 /// This is a *superset* of the achievable targets; global feasibility is the
 /// final filter. Sums and products are enumerated by reachability so the ranges
 /// stay tight without iterating all integers up to `n^k`.
-fn candidate_targets(op: &Operator, k: usize, n: usize) -> Vec<M> {
-    let n = n as M;
+fn candidate_targets(op: &Operator, k: usize, n: usize) -> Vec<Target> {
+    let n = n as Target;
     match op {
         Operator::Given => (1..=n).collect(),
         // A 2-cell collinear pair can never differ by 0 or by `n` or more.
@@ -86,15 +86,22 @@ fn candidate_targets(op: &Operator, k: usize, n: usize) -> Vec<M> {
             .into_iter()
             .filter(|&t| t > 0)
             .collect(),
-        Operator::Multiply => reachable(k, n, 1, M::saturating_mul).into_iter().collect(),
+        Operator::Multiply => reachable(k, n, 1, Target::saturating_mul)
+            .into_iter()
+            .collect(),
     }
 }
 
 /// Reachable accumulator values after combining `k` cells, each contributing a
 /// value in `1..=n` via `step`, starting from `seed`. Values exceeding
 /// [`MAX_PRODUCT`] are pruned to keep the set finite.
-fn reachable(k: usize, n: M, seed: M, step: impl Fn(M, M) -> M) -> BTreeSet<M> {
-    let mut acc: BTreeSet<M> = BTreeSet::from([seed]);
+fn reachable(
+    k: usize,
+    n: Target,
+    seed: Target,
+    step: impl Fn(Target, Target) -> Target,
+) -> BTreeSet<Target> {
+    let mut acc: BTreeSet<Target> = BTreeSet::from([seed]);
     for _ in 0..k {
         let mut next = BTreeSet::new();
         for &a in &acc {
@@ -123,7 +130,7 @@ fn reachable(k: usize, n: M, seed: M, step: impl Fn(M, M) -> M) -> BTreeSet<M> {
 
 /// Cache key: a content hash of the committed cages, plus the candidate cage's cells.
 type CacheKey = (u64, Vec<Cell>);
-type FeasibleCache = HashMap<CacheKey, Vec<(Operator, M)>>;
+type FeasibleCache = HashMap<CacheKey, Vec<(Operator, Target)>>;
 
 thread_local! {
     static CACHE: RefCell<FeasibleCache> = RefCell::new(FeasibleCache::new());
@@ -138,7 +145,10 @@ fn puzzle_key(puzzle: &Puzzle) -> u64 {
 /// Memoized [`feasible_op_targets`]. Returns the cached result for the
 /// `(puzzle, polyomino)` pair if present, otherwise computes and stores it.
 #[must_use]
-pub fn cached_feasible_op_targets(puzzle: &Puzzle, polyomino: &Polyomino) -> Vec<(Operator, M)> {
+pub fn cached_feasible_op_targets(
+    puzzle: &Puzzle,
+    polyomino: &Polyomino,
+) -> Vec<(Operator, Target)> {
     let key = (puzzle_key(puzzle), polyomino.cells());
     if let Some(hit) = CACHE.with_borrow(|c| c.get(&key).cloned()) {
         return hit;
@@ -156,8 +166,8 @@ pub fn cached_feasible_op_targets(puzzle: &Puzzle, polyomino: &Polyomino) -> Vec
 /// Without-Solution two-step picker: the operator strip shows the keys, and
 /// clicking one reveals its targets.
 #[must_use]
-pub fn group_by_operator(pairs: &[(Operator, M)]) -> Vec<(Operator, Vec<M>)> {
-    let mut grouped: Vec<(Operator, Vec<M>)> = Vec::new();
+pub fn group_by_operator(pairs: &[(Operator, Target)]) -> Vec<(Operator, Vec<Target>)> {
+    let mut grouped: Vec<(Operator, Vec<Target>)> = Vec::new();
     for (op, target) in pairs {
         if let Some(entry) = grouped.iter_mut().find(|(o, _)| o == op) {
             entry.1.push(*target);

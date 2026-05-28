@@ -46,7 +46,7 @@ mod regin;
 mod test_utils;
 
 pub use cage::Cage;
-pub use cell::{Cell, M, N, Tuple, Values};
+pub use cell::{Cell, Target, Tuple, Value, Values};
 pub use error::Error;
 pub use generate::generate;
 pub use grid::Grid;

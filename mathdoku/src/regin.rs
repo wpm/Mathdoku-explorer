@@ -13,7 +13,7 @@
 #![allow(clippy::similar_names)] // var/val, ip/jp/kp are standard idioms in matching/SCC algorithms
 
 use crate::Values;
-use crate::cell::N;
+use crate::cell::Value;
 use std::collections::HashMap;
 
 /// Full Régin GAC for all-different.
@@ -28,12 +28,12 @@ pub fn regin_gac(values: &[Values]) -> Vec<Values> {
         return vec![];
     }
 
-    let all_values: Vec<N> = values
+    let all_values: Vec<Value> = values
         .iter()
         .fold(Values::default(), |acc, d| acc | *d)
         .values();
     let num_values = all_values.len();
-    let value_index: HashMap<N, usize> = all_values
+    let value_index: HashMap<Value, usize> = all_values
         .iter()
         .enumerate()
         .map(|(i, &v)| (v, i))
@@ -107,7 +107,7 @@ pub fn regin_gac(values: &[Values]) -> Vec<Values> {
     let mut result = vec![Values::default(); n];
     for var in 0..n {
         let matched = var_match[var];
-        let vals: Vec<N> = indexed_values[var]
+        let vals: Vec<Value> = indexed_values[var]
             .iter()
             .filter(|&&vi| matched == Some(vi) || scc[var] == scc[n + vi] || reachable[n + vi])
             .map(|&vi| all_values[vi])
@@ -220,7 +220,7 @@ mod tests {
             i: usize,
             values: &[Values],
             used: u16,
-            current: &mut [N],
+            current: &mut [Value],
             support: &mut [Values],
         ) {
             if i == values.len() {
@@ -243,7 +243,7 @@ mod tests {
         support
     }
 
-    fn sorted(fills: &[Values]) -> Vec<Vec<N>> {
+    fn sorted(fills: &[Values]) -> Vec<Vec<Value>> {
         fills.iter().map(|f| f.values()).collect()
     }
 

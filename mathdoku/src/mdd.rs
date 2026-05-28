@@ -47,7 +47,7 @@
 use std::collections::HashMap;
 
 use crate::operation::{Operation, Operator};
-use crate::{M, N, Polyomino, Tuple, Values};
+use crate::{Polyomino, Target, Tuple, Value, Values};
 
 /// Index of a node within [`Mdd::nodes`].
 type NodeId = usize;
@@ -57,7 +57,7 @@ type NodeId = usize;
 #[derive(Debug, Clone)]
 struct Node {
     level: usize,
-    edges: Vec<(N, NodeId)>,
+    edges: Vec<(Value, NodeId)>,
 }
 
 /// A reduced ordered MDD over the valid tuples of a cage.
@@ -77,7 +77,7 @@ impl Mdd {
     /// and by the operator's arithmetic bounds before recursing, and the resulting
     /// node is hash-consed so equivalent subgraphs are shared.
     #[allow(clippy::needless_pass_by_value)]
-    pub(crate) fn build(n: N, polyomino: &Polyomino, operation: Operation) -> Self {
+    pub(crate) fn build(n: usize, polyomino: &Polyomino, operation: Operation) -> Self {
         let cells = polyomino.cells();
         let k = cells.len();
         let shares = (0..k)
@@ -223,22 +223,22 @@ impl Mdd {
 
 /// Mutable state threaded through the depth-first construction.
 struct Builder {
-    n: N,
+    n: usize,
     k: usize,
     operator: Operator,
-    target: M,
+    target: Target,
     /// `shares[i]` holds the indices `j < i` of earlier cells sharing a row or
     /// column with cell `i` — the cells whose values constrain cell `i`.
     shares: Vec<Vec<usize>>,
     nodes: Vec<Node>,
-    intern: HashMap<(usize, Vec<(N, NodeId)>), NodeId>,
+    intern: HashMap<(usize, Vec<(Value, NodeId)>), NodeId>,
     terminal: NodeId,
 }
 
 impl Builder {
     /// Interns a node by `(level, sorted edges)`, returning the existing canonical id
     /// if an equivalent node was already created, or a fresh id otherwise.
-    fn intern(&mut self, level: usize, mut edges: Vec<(N, NodeId)>) -> NodeId {
+    fn intern(&mut self, level: usize, mut edges: Vec<(Value, NodeId)>) -> NodeId {
         edges.sort_unstable();
         let key = (level, edges.clone());
         if let Some(&id) = self.intern.get(&key) {
@@ -254,54 +254,58 @@ impl Builder {
     /// running accumulator `acc` (sum for [`Operator::Add`], product for
     /// [`Operator::Multiply`]). Returns the canonical node id, or `None` if no value
     /// leads to the accept terminal ("dead").
-    fn dfs(&mut self, level: usize, assignment: &mut Vec<N>, acc: M) -> Option<NodeId> {
+    fn dfs(&mut self, level: usize, assignment: &mut Vec<Value>, acc: Target) -> Option<NodeId> {
         if level == self.k {
             return Some(self.terminal);
         }
-        let mut edges: Vec<(N, NodeId)> = Vec::new();
-        for v in 1..=self.n {
+        let mut edges: Vec<(Value, NodeId)> = Vec::new();
+        for v in 1u8..=(self.n as Value) {
             if self.shares[level].iter().any(|&j| assignment[j] == v) {
                 continue;
             }
             let remaining = self.k - level - 1;
             let next_acc = match self.operator {
                 Operator::Add => {
-                    let new_sum = acc + M::from(v);
-                    if new_sum + remaining as M > self.target {
+                    let new_sum = acc + Target::from(v);
+                    if new_sum + remaining as Target > self.target {
                         break; // min reachable total already exceeds the target
                     }
-                    if new_sum + remaining as M * M::from(self.n) < self.target {
+                    if new_sum + remaining as Target * (self.n as Target) < self.target {
                         continue; // max reachable total still below the target
                     }
                     new_sum
                 }
                 Operator::Multiply => {
-                    let new_product = acc * M::from(v);
+                    let new_product = acc * Target::from(v);
                     if new_product > self.target {
                         break; // product already exceeds the target
                     }
                     if !self.target.is_multiple_of(new_product) {
                         continue; // target is not a multiple of the running product
                     }
-                    if new_product * M::from(self.n).pow(remaining as u32) < self.target {
+                    if new_product * (self.n as Target).pow(remaining as u32) < self.target {
                         continue; // max reachable product still below the target
                     }
                     new_product
                 }
                 Operator::Subtract => match assignment.last() {
-                    Some(&first) if M::from(first).abs_diff(M::from(v)) != self.target => continue,
-                    _ => acc,
-                },
-                Operator::Divide => match assignment.last() {
                     Some(&first)
-                        if M::from(first) != M::from(v) * self.target
-                            && M::from(v) != M::from(first) * self.target =>
+                        if Target::from(first).abs_diff(Target::from(v)) != self.target =>
                     {
                         continue;
                     }
                     _ => acc,
                 },
-                Operator::Given if M::from(v) != self.target => continue,
+                Operator::Divide => match assignment.last() {
+                    Some(&first)
+                        if Target::from(first) != Target::from(v) * self.target
+                            && Target::from(v) != Target::from(first) * self.target =>
+                    {
+                        continue;
+                    }
+                    _ => acc,
+                },
+                Operator::Given if Target::from(v) != self.target => continue,
                 Operator::Given => acc,
             };
             assignment.push(v);
@@ -342,7 +346,7 @@ mod tests {
     }
 
     /// Sorted, deduplicated tuples produced by the MDD for the given cage.
-    fn mdd_tuples(n: N, polyomino: &Polyomino, op: Operation) -> Vec<Tuple> {
+    fn mdd_tuples(n: usize, polyomino: &Polyomino, op: Operation) -> Vec<Tuple> {
         let mut ts: Vec<Tuple> = Mdd::build(n, polyomino, op).tuples().collect();
         ts.sort();
         ts.dedup();
@@ -353,11 +357,11 @@ mod tests {
     /// every assignment of `1..=n` to the cage's cells that satisfies the operator's
     /// arithmetic and the all-different rule within each shared row or column. This
     /// shares no machinery with [`Mdd::build`], so agreement is a real cross-check.
-    fn ref_tuples(n: N, polyomino: &Polyomino, op: &Operation) -> Vec<Tuple> {
+    fn ref_tuples(n: usize, polyomino: &Polyomino, op: &Operation) -> Vec<Tuple> {
         let cells = polyomino.cells();
         let k = cells.len();
 
-        let collinear_ok = |t: &[N]| {
+        let collinear_ok = |t: &[Value]| {
             (0..k).all(|i| {
                 (0..i).all(|j| {
                     (cells[i].row != cells[j].row && cells[i].column != cells[j].column)
@@ -366,14 +370,18 @@ mod tests {
             })
         };
 
-        let satisfies = |t: &[N]| match op.operator {
-            Operator::Add => t.iter().map(|&v| M::from(v)).sum::<M>() == op.target,
-            Operator::Multiply => t.iter().map(|&v| M::from(v)).product::<M>() == op.target,
-            Operator::Given => k == 1 && M::from(t[0]) == op.target,
-            Operator::Subtract => k == 2 && M::from(t[0]).abs_diff(M::from(t[1])) == op.target,
+        let satisfies = |t: &[Value]| match op.operator {
+            Operator::Add => t.iter().map(|&v| Target::from(v)).sum::<Target>() == op.target,
+            Operator::Multiply => {
+                t.iter().map(|&v| Target::from(v)).product::<Target>() == op.target
+            }
+            Operator::Given => k == 1 && Target::from(t[0]) == op.target,
+            Operator::Subtract => {
+                k == 2 && Target::from(t[0]).abs_diff(Target::from(t[1])) == op.target
+            }
             Operator::Divide => {
                 k == 2 && {
-                    let (a, b) = (M::from(t[0]), M::from(t[1]));
+                    let (a, b) = (Target::from(t[0]), Target::from(t[1]));
                     a == b * op.target || b == a * op.target
                 }
             }
@@ -387,7 +395,7 @@ mod tests {
                 out.push(t.clone());
             }
             let mut i = 0;
-            while i < k && t[i] == n {
+            while i < k && t[i] == n as Value {
                 t[i] = 1;
                 i += 1;
             }
@@ -404,7 +412,7 @@ mod tests {
 
     /// Asserts the MDD and the reference enumerator agree, and that feasibility
     /// matches tuple non-emptiness.
-    fn assert_equiv(n: N, polyomino: &Polyomino, op: &Operation) {
+    fn assert_equiv(n: usize, polyomino: &Polyomino, op: &Operation) {
         let mdd = Mdd::build(n, polyomino, op.clone());
         let expected = ref_tuples(n, polyomino, op);
         let actual = mdd_tuples(n, polyomino, op.clone());
@@ -424,13 +432,13 @@ mod tests {
 
     /// Targets worth testing for `operator` in an `n`×`n` grid holding `k` cells. The
     /// ranges run one past the largest reachable value to also exercise infeasibility.
-    fn targets(operator: &Operator, n: N, k: usize) -> Vec<M> {
+    fn targets(operator: &Operator, n: usize, k: usize) -> Vec<Target> {
         match operator {
-            Operator::Add => (1..=M::from(n) * k as M + 1).collect(),
-            Operator::Multiply => (1..=M::from(n).pow(k as u32) + 1).collect(),
-            Operator::Subtract => (0..=M::from(n)).collect(),
-            Operator::Divide => (1..=M::from(n)).collect(),
-            Operator::Given => (1..=M::from(n) + 1).collect(),
+            Operator::Add => (1..=(n as Target) * k as Target + 1).collect(),
+            Operator::Multiply => (1..=(n as Target).pow(k as u32) + 1).collect(),
+            Operator::Subtract => (0..=n as Target).collect(),
+            Operator::Divide => (1..=n as Target).collect(),
+            Operator::Given => (1..=n as Target + 1).collect(),
         }
     }
 
@@ -456,7 +464,7 @@ mod tests {
 
     /// The MDD is reduced iff no two distinct nodes at the same level share an edge map.
     fn assert_reduced(mdd: &Mdd) {
-        let mut seen: HashSet<(usize, Vec<(N, NodeId)>)> = HashSet::new();
+        let mut seen: HashSet<(usize, Vec<(Value, NodeId)>)> = HashSet::new();
         for node in &mdd.nodes {
             assert!(
                 seen.insert((node.level, node.edges.clone())),
@@ -566,7 +574,7 @@ mod tests {
     /// prefix (including the empty root and every full tuple as its own leaf). The
     /// reduced MDD additionally merges shared *suffixes*, so it can only be smaller.
     fn trie_node_count(ts: &[Tuple]) -> usize {
-        let mut prefixes: HashSet<&[N]> = HashSet::new();
+        let mut prefixes: HashSet<&[Value]> = HashSet::new();
         for t in ts {
             for len in 0..=t.len() {
                 let _ = prefixes.insert(&t[..len]);
@@ -612,10 +620,10 @@ mod tests {
 
     /// `k` random value sets over `1..=n`, each value independently included with
     /// probability one half — so some value sets may come out empty.
-    fn random_support_values(rng: &mut ChaCha8Rng, n: N, k: usize) -> Vec<Values> {
+    fn random_support_values(rng: &mut ChaCha8Rng, n: usize, k: usize) -> Vec<Values> {
         (0..k)
             .map(|_| {
-                (1..=n).fold(Values::default(), |acc, v| {
+                (1u8..=(n as Value)).fold(Values::default(), |acc, v| {
                     if rng.random_range(0u8..2) == 1 {
                         acc | Values::singleton(v)
                     } else {
@@ -679,7 +687,7 @@ mod tests {
         let shape = l_shape();
         let k = shape.len();
         let mdd = Mdd::build(n, &shape, Operation::new(Operator::Multiply, 24));
-        let values = vec![Values::all(n as usize); k];
+        let values = vec![Values::all(n); k];
         let natural = brute_force_support(&mdd, &values);
         assert_eq!(mdd.support(&values), natural);
         // Sanity: the cage is non-trivial — at least one cell supports several values.

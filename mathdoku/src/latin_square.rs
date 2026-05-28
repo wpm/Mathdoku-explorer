@@ -12,7 +12,7 @@
 
 use rand::{Rng, RngExt};
 
-use crate::cell::N;
+use crate::cell::Value;
 
 /// Returns a uniformly random index `x` in `0..n` such that `line(x) == 1`.
 /// In a proper state each line has exactly one such entry; in an improper state
@@ -48,7 +48,7 @@ fn pick_one_from_line(rng: &mut impl Rng, n: usize, line: impl Fn(usize) -> i8) 
 /// Reference: Mark T. Jacobson and Peter Matthews, "Generating uniformly
 /// distributed random Latin squares", *Journal of Combinatorial Designs* 4(6),
 /// 1996, pp. 405–437.
-pub fn generate_latin_square(n: usize, rng: &mut impl Rng) -> Vec<Vec<N>> {
+pub fn generate_latin_square(n: usize, rng: &mut impl Rng) -> Vec<Vec<Value>> {
     // Seed with the cyclic Latin square: L[r][c] = ((r + c) mod n) + 1.
     let mut m: Vec<Vec<Vec<i8>>> = vec![vec![vec![0i8; n]; n]; n];
     for r in 0..n {
@@ -103,7 +103,7 @@ pub fn generate_latin_square(n: usize, rng: &mut impl Rng) -> Vec<Vec<N>> {
                 .map(|c| {
                     // The invariant guarantees exactly one 1 per line; this cannot be None.
                     let v = (0..n).position(|v| m[r][c][v] == 1).unwrap_or(0);
-                    (v + 1) as N
+                    (v + 1) as Value
                 })
                 .collect()
         })
@@ -121,16 +121,16 @@ mod tests {
 
     /// Returns true if `ls` is a valid n×n Latin square: each row and each
     /// column contains each value in `1..=n` exactly once.
-    fn validate_latin_square(ls: &[Vec<N>]) -> bool {
+    fn validate_latin_square(ls: &[Vec<Value>]) -> bool {
         let n = ls.len();
-        let expected: HashSet<N> = (1..=(n as N)).collect();
+        let expected: HashSet<Value> = (1..=(n as Value)).collect();
         for row in ls {
-            if row.iter().copied().collect::<HashSet<N>>() != expected {
+            if row.iter().copied().collect::<HashSet<Value>>() != expected {
                 return false;
             }
         }
         for c in 0..n {
-            let col: HashSet<N> = ls.iter().map(|r| r[c]).collect();
+            let col: HashSet<Value> = ls.iter().map(|r| r[c]).collect();
             if col != expected {
                 return false;
             }
@@ -158,7 +158,7 @@ mod tests {
         // of them should appear at least once; tolerance is loose so the test
         // does not flake on rare seeds.
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        let mut counts: HashMap<Vec<Vec<N>>, usize> = HashMap::new();
+        let mut counts: HashMap<Vec<Vec<Value>>, usize> = HashMap::new();
         for _ in 0..1200 {
             let ls = generate_latin_square(3, &mut rng);
             *counts.entry(ls).or_insert(0) += 1;

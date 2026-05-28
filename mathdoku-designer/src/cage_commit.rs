@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use mathdoku::{Cell, M, Operator, Polyomino};
+use mathdoku::{Cell, Operator, Polyomino, Target};
 use mathdoku_designer_shared::State;
 
 use crate::ipc;
@@ -23,7 +23,7 @@ use crate::ipc;
 pub fn commit_cage(
     polyomino: &Polyomino,
     operator: Operator,
-    target: Option<M>,
+    target: Option<Target>,
     parked: BTreeSet<Polyomino>,
     undo_stack: RwSignal<Vec<State>>,
     redo_stack: RwSignal<Vec<State>>,

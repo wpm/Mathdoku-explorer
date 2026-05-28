@@ -133,13 +133,13 @@ mod tests {
     use serde_json::{from_str, to_string};
 
     use super::*;
-    use crate::M;
+    use crate::Target;
     use crate::cage::Cage;
     use crate::operation::Operator::{Add, Given};
     use crate::operation::{Operation, Operator};
     use crate::polyomino::Polyomino;
 
-    fn cage_at(positions: &[(usize, usize)], operator: Operator, target: M) -> Cage {
+    fn cage_at(positions: &[(usize, usize)], operator: Operator, target: Target) -> Cage {
         let cells: Vec<crate::Cell> = positions
             .iter()
             .map(|&(r, c)| crate::Cell::new(r, c))

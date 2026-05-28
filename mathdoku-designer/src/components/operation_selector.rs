@@ -21,7 +21,7 @@
 )]
 
 use leptos::prelude::*;
-use mathdoku::{M, Operation, Operator, Polyomino};
+use mathdoku::{Operation, Operator, Polyomino, Target};
 
 use super::puzzle::InteractionState;
 use crate::feasibility::group_by_operator;
@@ -37,7 +37,7 @@ pub enum FeasibilityState {
     /// Feasibility is being computed; the picker shows a spinner.
     Computing,
     /// Computation finished with the given feasible pairs (possibly empty).
-    Ready(Vec<(Operator, M)>),
+    Ready(Vec<(Operator, Target)>),
 }
 
 /// Floating tab well rendered over the anchor cell of the pending cage.
@@ -223,7 +223,7 @@ fn empty_message_view(x: f64, y: f64) -> AnyView {
 /// Step one: the operator strip. Clicking an operator opens its target picker.
 #[allow(clippy::too_many_arguments)]
 fn operator_strip_view(
-    pairs: &[(Operator, M)],
+    pairs: &[(Operator, Target)],
     picked: RwSignal<Option<Operator>>,
     selected_idx: RwSignal<usize>,
     tab_w: f64,
@@ -286,9 +286,9 @@ fn operator_strip_view(
 /// is the placeholder. Choosing an option commits the cage with `(operator, target)`.
 #[allow(clippy::too_many_arguments)]
 fn target_select_view(
-    pairs: &[(Operator, M)],
+    pairs: &[(Operator, Target)],
     op: &Operator,
-    on_commit: Callback<(Operator, Option<M>)>,
+    on_commit: Callback<(Operator, Option<Target>)>,
     tab_w: f64,
     tab_h: f64,
     pad: f64,
@@ -333,7 +333,7 @@ fn target_select_view(
                 class="target-select"
                 style=select_style
                 on:change=move |ev| {
-                    if let Ok(target) = event_target_value(&ev).parse::<M>() {
+                    if let Ok(target) = event_target_value(&ev).parse::<Target>() {
                         on_commit.run((op_for_change.clone(), Some(target)));
                     }
                 }
@@ -359,7 +359,7 @@ pub struct PendingCommit {
     pub selected_idx: RwSignal<usize>,
     /// Called with the chosen `(operator, target)` to commit the cage. `target`
     /// is `None` in With-Solution mode and `Some` in Without-Solution mode.
-    pub on_commit: Callback<(Operator, Option<M>)>,
+    pub on_commit: Callback<(Operator, Option<Target>)>,
     /// Without-Solution feasibility state. `None` selects With-Solution rendering.
     pub feasible: Option<RwSignal<FeasibilityState>>,
     /// Without-Solution: the operator whose target sub-picker is open.
@@ -725,7 +725,7 @@ mod tests {
         use crate::keys::{ARROW_LEFT, ARROW_RIGHT, ENTER, ESCAPE, TAB};
         use leptos::prelude::*;
         use leptos::reactive::owner::Owner;
-        use mathdoku::{M, Operator};
+        use mathdoku::{Operator, Target};
         use mathdoku_designer_shared::State;
 
         const ALL_OPS: [Operator; 4] = [
@@ -735,11 +735,11 @@ mod tests {
             Operator::Divide,
         ];
 
-        type Committed = RwSignal<Option<(Operator, Option<M>)>>;
+        type Committed = RwSignal<Option<(Operator, Option<Target>)>>;
 
         fn pending(committed: Committed) -> PendingCommit {
             let on_commit =
-                Callback::new(move |pair: (Operator, Option<M>)| committed.set(Some(pair)));
+                Callback::new(move |pair: (Operator, Option<Target>)| committed.set(Some(pair)));
             PendingCommit {
                 polyomino: poly(&[(0, 0), (0, 1)]),
                 allowed: ALL_OPS.to_vec(),
@@ -931,7 +931,7 @@ mod tests {
 
         use super::super::FeasibilityState;
 
-        fn ready_pending(committed: Committed, pairs: Vec<(Operator, M)>) -> PendingCommit {
+        fn ready_pending(committed: Committed, pairs: Vec<(Operator, Target)>) -> PendingCommit {
             let mut p = pending(committed);
             p.feasible = Some(RwSignal::new(FeasibilityState::Ready(pairs)));
             p
@@ -941,7 +941,8 @@ mod tests {
         fn without_solution_strip_tab_navigates_and_enter_picks() {
             Owner::new().with(|| {
                 let committed = RwSignal::new(None);
-                let pairs: Vec<(Operator, M)> = vec![(Operator::Add, 3), (Operator::Subtract, 1)];
+                let pairs: Vec<(Operator, Target)> =
+                    vec![(Operator::Add, 3), (Operator::Subtract, 1)];
                 let p = ready_pending(committed, pairs);
                 let designer_state = RwSignal::new(State::new(4).unwrap());
                 let pending_commit = RwSignal::new(Some(p.clone()));
@@ -978,7 +979,8 @@ mod tests {
         fn without_solution_shortcut_key_picks_operator() {
             Owner::new().with(|| {
                 let committed = RwSignal::new(None);
-                let pairs: Vec<(Operator, M)> = vec![(Operator::Add, 3), (Operator::Subtract, 1)];
+                let pairs: Vec<(Operator, Target)> =
+                    vec![(Operator::Add, 3), (Operator::Subtract, 1)];
                 let p = ready_pending(committed, pairs);
                 let designer_state = RwSignal::new(State::new(4).unwrap());
                 let pending_commit = RwSignal::new(Some(p.clone()));
@@ -1002,7 +1004,7 @@ mod tests {
         fn without_solution_escape_backs_out_then_cancels() {
             Owner::new().with(|| {
                 let committed = RwSignal::new(None);
-                let pairs: Vec<(Operator, M)> = vec![(Operator::Add, 3)];
+                let pairs: Vec<(Operator, Target)> = vec![(Operator::Add, 3)];
                 let p = ready_pending(committed, pairs);
                 p.picked_operator.set(Some(Operator::Add));
 
@@ -1065,8 +1067,9 @@ mod tests {
         fn without_solution_singleton_escape_cancels_instead_of_backing_out() {
             Owner::new().with(|| {
                 let committed = RwSignal::new(None);
-                let on_commit =
-                    Callback::new(move |pair: (Operator, Option<M>)| committed.set(Some(pair)));
+                let on_commit = Callback::new(move |pair: (Operator, Option<Target>)| {
+                    committed.set(Some(pair));
+                });
                 // A singleton opens straight on the value dropdown (picked = Given).
                 let p = PendingCommit {
                     polyomino: poly(&[(0, 0)]),

@@ -23,7 +23,7 @@ use crate::csp::{Constraint, Variable, generalized_arc_consistency};
 use crate::grid::Grid;
 use crate::puzzle::Puzzle;
 use crate::regin::regin_gac;
-use crate::{Cell, Error, N, Values};
+use crate::{Cell, Error, Values};
 
 /// A [`Cell`] in a [`Grid`], used as the CSP variable type.
 ///
@@ -168,8 +168,7 @@ fn propagate_cage(
         .iter()
         .map(|&c| state.cell_values(c))
         .collect::<Result<_, _>>()?;
-    #[allow(clippy::cast_possible_truncation)]
-    let new_values = cage.mdd(state.n() as N).support(&old_values);
+    let new_values = cage.mdd(state.n()).support(&old_values);
     apply_values(state, cages, &cells, &old_values, &new_values)
 }
 
@@ -400,7 +399,11 @@ mod tests {
 
     // --- Cage::propagate (via propagate_cage) ---
 
-    fn cage(positions: &[(usize, usize)], operator: crate::Operator, target: crate::M) -> Cage {
+    fn cage(
+        positions: &[(usize, usize)],
+        operator: crate::Operator,
+        target: crate::Target,
+    ) -> Cage {
         use crate::operation::Operation;
         use crate::polyomino::Polyomino;
         let cells: Vec<Cell> = positions.iter().map(|&(r, c)| Cell::new(r, c)).collect();

@@ -16,7 +16,7 @@
 //! polyomino's size: singletons allow only `Given`; pairs allow all four binary
 //! operators; larger cages allow only `Add` and `Multiply`.
 
-use crate::{M, Polyomino};
+use crate::{Polyomino, Target};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::fmt::{Display, Formatter};
@@ -28,12 +28,12 @@ use std::fmt::{Display, Formatter};
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Operation {
     pub operator: Operator,
-    pub target: M,
+    pub target: Target,
 }
 
 impl Operation {
     /// Creates an operation from an operator and a target value.
-    pub const fn new(operator: Operator, target: M) -> Self {
+    pub const fn new(operator: Operator, target: Target) -> Self {
         Self { operator, target }
     }
 }

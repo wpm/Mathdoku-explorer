@@ -11,7 +11,7 @@
 
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use mathdoku::{Cage, Cell, Grid, M, Operation, Operator, Polyomino, operators};
+use mathdoku::{Cage, Cell, Grid, Operation, Operator, Polyomino, Target, operators};
 use mathdoku_designer_shared::State;
 
 use super::cage::Cage as CageComponent;
@@ -150,7 +150,7 @@ pub fn Puzzle(
             .filter(|p| p.cells() != poly.cells())
             .cloned()
             .collect();
-        let on_commit = Callback::new(move |(op, target): (Operator, Option<M>)| {
+        let on_commit = Callback::new(move |(op, target): (Operator, Option<Target>)| {
             pending_commit.set(None);
             commit_cage(
                 &poly_for_cb,
@@ -648,7 +648,7 @@ struct SingletonDigitCommit {
     /// Provisional cages to keep (all except one already occupying the cell).
     parked: std::collections::BTreeSet<Polyomino>,
     /// The chosen `Given` target value.
-    target: M,
+    target: Target,
 }
 
 /// Decides whether a digit keypress should immediately commit a singleton
@@ -690,7 +690,7 @@ fn singleton_digit_commit(state: &State, key: &str) -> Option<SingletonDigitComm
     }
 
     let poly = Polyomino::from_cells(&[active]).ok()?;
-    let target = M::from(value);
+    let target = Target::from(value);
     let cage = Cage::new(poly.clone(), Operation::new(Operator::Given, target));
     if !crate::feasibility::is_globally_feasible(&state.puzzle, &cage) {
         return None;
