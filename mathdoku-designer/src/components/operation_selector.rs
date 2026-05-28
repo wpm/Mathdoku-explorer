@@ -252,8 +252,7 @@ fn operator_strip_view(
                 let tab_y = y + pad;
                 let tx = tab_x + tab_w / 2.0;
                 let ty = tab_y + tab_h / 2.0;
-                // `Given` renders with no symbol, so use a literal label for the strip.
-                let label = if op == Operator::Given { "#".to_owned() } else { op.to_string() };
+                let label = op.to_string();
                 view! {
                     <g
                         style="cursor:pointer;"
@@ -307,12 +306,9 @@ fn target_select_view(
         .collect();
     let fo_w = tab_w.max(56.0) + pad * 2.0;
     let fo_h = tab_h + pad * 2.0;
-    // `Given` renders with no symbol, so use a literal placeholder like the strip.
-    let placeholder = if *op == Operator::Given {
-        "#".to_owned()
-    } else {
-        op.to_string()
-    };
+    // The operator symbol is the placeholder. `Given` renders with no symbol, so
+    // a singleton's value dropdown shows a blank header rather than a `#`.
+    let placeholder = op.to_string();
     let op_for_change = op.clone();
 
     // Move focus to the dropdown as soon as it mounts.
@@ -504,11 +500,17 @@ fn handle_key_without_solution(
         }
         // Step two: the native target dropdown (`target_select_view`) owns arrow,
         // type-ahead, and Enter navigation while focused, so only Escape reaches
-        // here — backing out to the operator strip.
+        // here. For multi-cell cages it backs out to the operator strip; for
+        // singletons (which open straight on the dropdown with no strip behind it)
+        // it cancels the commit outright.
         Some(_) => {
             if key == ESCAPE {
-                pending.picked_operator.set(None);
-                pending.selected_idx.set(0);
+                if pending.polyomino.len() == 1 {
+                    cancel_pending(pending, pending_commit, designer_state, on_state_change);
+                } else {
+                    pending.picked_operator.set(None);
+                    pending.selected_idx.set(0);
+                }
             }
         }
     }
@@ -1056,6 +1058,46 @@ mod tests {
                 ));
                 assert!(committed.get_untracked().is_none());
                 assert!(p.picked_operator.get_untracked().is_none());
+            });
+        }
+
+        #[test]
+        fn without_solution_singleton_escape_cancels_instead_of_backing_out() {
+            Owner::new().with(|| {
+                let committed = RwSignal::new(None);
+                let on_commit =
+                    Callback::new(move |pair: (Operator, Option<M>)| committed.set(Some(pair)));
+                // A singleton opens straight on the value dropdown (picked = Given).
+                let p = PendingCommit {
+                    polyomino: poly(&[(0, 0)]),
+                    allowed: vec![Operator::Given],
+                    selected_idx: RwSignal::new(0usize),
+                    on_commit,
+                    feasible: Some(RwSignal::new(FeasibilityState::Ready(vec![
+                        (Operator::Given, 1),
+                        (Operator::Given, 2),
+                    ]))),
+                    picked_operator: RwSignal::new(Some(Operator::Given)),
+                };
+
+                let mut st = State::new(4).unwrap();
+                let _ = st.provisional_cages.insert(p.polyomino.clone());
+                let designer_state = RwSignal::new(st);
+                let pending_commit = RwSignal::new(Some(p.clone()));
+                let on_state_change = Callback::new(|_: State| {});
+
+                assert!(handle_key(
+                    ESCAPE,
+                    false,
+                    &p,
+                    pending_commit,
+                    designer_state,
+                    on_state_change,
+                ));
+                // No operator strip to fall back to — the commit is cancelled.
+                assert!(pending_commit.get_untracked().is_none());
+                assert!(designer_state.get_untracked().provisional_cages.is_empty());
+                assert!(committed.get_untracked().is_none());
             });
         }
     }

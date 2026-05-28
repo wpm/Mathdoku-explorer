@@ -111,3 +111,46 @@ test.describe('Without-Solution cage commit', () => {
     await expect(page.locator('.grid-svg text').filter({ hasText: /^\+3$/ })).toBeVisible();
   });
 });
+
+test.describe('Without-Solution singleton cages', () => {
+  test('typing a permitted digit immediately creates a singleton cage', async ({ page }) => {
+    await installTauriStubs(page, { n: 3 }, { withoutSolution: true });
+    await gotoApp(page);
+    await waitForGrid(page);
+    await page.locator('.grid-svg').focus();
+
+    // The active cell starts at (0,0); 2 is a permitted value in an empty 3×3.
+    await page.keyboard.press('2');
+
+    // A committed Given cage labelled "2" appears with no selector step. Cage and
+    // selector labels are weight 700, isolating it from the cell's domain digits.
+    await expect(selectorLabels(page).filter({ hasText: /^2$/ })).toBeVisible();
+  });
+
+  test('singleton picker opens on the value dropdown, skipping the operator step', async ({ page }) => {
+    await installTauriStubs(page, { n: 3 }, { withoutSolution: true });
+    await gotoApp(page);
+    await waitForGrid(page);
+    await page.locator('.grid-svg').focus();
+
+    // Enter on the empty active cell opens the singleton picker directly on the
+    // native value dropdown.
+    await page.keyboard.press(ENTER);
+
+    const targetSelect = page.locator('.grid-svg select.target-select');
+    await expect(targetSelect).toBeVisible();
+    await expect(targetSelect).toBeFocused();
+
+    // The operator strip is skipped (no operator tabs) and there is no '#' header.
+    await expect(selectorLabels(page)).toHaveCount(0);
+    await expect(targetSelect.locator('option').filter({ hasText: '#' })).toHaveCount(0);
+
+    // The dropdown offers the feasible Given values for an empty 3×3 cell (1–3).
+    await expect(targetSelect.locator('option[value="1"]')).toHaveCount(1);
+    await expect(targetSelect.locator('option[value="3"]')).toHaveCount(1);
+
+    // Choosing a value commits the singleton Given cage (its label is just the number).
+    await targetSelect.selectOption('3');
+    await expect(page.locator('.grid-svg text').filter({ hasText: /^3$/ })).toBeVisible();
+  });
+});
