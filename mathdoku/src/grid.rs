@@ -50,6 +50,7 @@ impl Grid {
     }
 
     /// Returns the grid size `n` (grid is `n`×`n`).
+    #[must_use]
     pub const fn n(&self) -> usize {
         self.n
     }
@@ -163,6 +164,7 @@ impl Grid {
     }
 
     /// Returns `true` if every cell's values are a singleton.
+    #[must_use]
     pub fn is_solution(&self) -> bool {
         (0..self.n)
             .flat_map(|r| (0..self.n).map(move |c| Cell::new(r, c)))
@@ -281,7 +283,6 @@ impl<'de> Deserialize<'de> for Grid {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use serde_json::{Value, from_str, json, to_string};
 

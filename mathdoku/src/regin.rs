@@ -204,7 +204,6 @@ fn dfs_assign(start: usize, label: usize, radj: &[Vec<usize>], comp: &mut [usize
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use rand::{RngExt, SeedableRng};
     use rand_chacha::ChaCha8Rng;

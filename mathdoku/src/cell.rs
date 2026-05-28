@@ -28,6 +28,7 @@ pub struct Cell {
 
 impl Cell {
     /// Creates a cell at the given `row` and `column`.
+    #[must_use]
     pub const fn new(row: usize, column: usize) -> Self {
         Self { row, column }
     }
@@ -71,6 +72,7 @@ impl Values {
 
     /// Returns the full set `{1, ..., n}`.
     #[allow(clippy::cast_possible_truncation)]
+    #[must_use]
     pub fn all(n: usize) -> Self {
         Self((1..=(n as Value)).fold(0u16, |acc, n| acc | (1u16 << u32::from(n))))
     }
@@ -82,11 +84,13 @@ impl Values {
     }
 
     /// Returns the values in ascending order.
+    #[must_use]
     pub fn values(self) -> Vec<Value> {
         (1u8..=9).filter(|&v| self.0 & (1u16 << v) != 0).collect()
     }
 
     /// Returns true if the set contains no values.
+    #[must_use]
     pub const fn is_empty(self) -> bool {
         self.0 == 0
     }
@@ -96,16 +100,19 @@ impl Values {
     /// Values are stored in bits 1–9 of a `u16`, so exactly one value means
     /// exactly one bit is set, which is equivalent to the inner integer
     /// being a power of two.
+    #[must_use]
     pub const fn is_singleton(self) -> bool {
         self.0.is_power_of_two()
     }
 
     /// Returns the number of values.
+    #[must_use]
     pub const fn len(self) -> usize {
         self.0.count_ones() as usize
     }
 
     /// Returns `true` if `value` is in this set.
+    #[must_use]
     pub const fn contains(self, value: Value) -> bool {
         self.0 & (1u16 << value) != 0
     }
@@ -143,7 +150,6 @@ impl<'de> Deserialize<'de> for Values {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use serde_json::{from_str, to_string};
 

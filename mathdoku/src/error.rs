@@ -137,7 +137,6 @@ impl fmt::Display for Error {
 impl StdError for Error {}
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use crate::cage::Cage;
     use crate::operation::{Operation, Operator};

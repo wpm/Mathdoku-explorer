@@ -35,6 +35,7 @@ pub struct Operation {
 
 impl Operation {
     /// Creates an operation from an operator and a target value.
+    #[must_use]
     pub const fn new(operator: Operator, target: Target) -> Self {
         Self { operator, target }
     }
@@ -80,6 +81,7 @@ impl Display for Operator {
 /// - 2 cells: all four binary operators.
 /// - 3+ cells: [`Operator::Add`] and [`Operator::Multiply`] only
 ///   (subtraction and division are undefined for more than two operands).
+#[must_use]
 pub fn operators(polynomial: &Polyomino) -> Vec<Operator> {
     match polynomial.len() {
         1 => vec![Operator::Given],

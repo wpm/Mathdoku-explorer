@@ -324,7 +324,7 @@ impl Builder {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::cast_possible_truncation)]
+#[allow(clippy::cast_possible_truncation)]
 mod tests {
     use std::collections::HashSet;
 

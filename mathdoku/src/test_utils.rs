@@ -1,6 +1,6 @@
 //! Shared test fixtures for building cells and polyominoes.
 
-#![allow(clippy::unwrap_used, clippy::missing_panics_doc)]
+#![allow(clippy::missing_panics_doc)]
 
 use crate::Cell;
 use crate::polyomino::Polyomino;

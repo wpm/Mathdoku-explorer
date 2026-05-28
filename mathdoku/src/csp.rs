@@ -84,7 +84,6 @@ where
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     //! Uses a minimal concrete CSP: state is `Vec<Vec<u32>>` (one domain per variable),
     //! variables are structs carrying an id and their constraint list, errors are `String`.

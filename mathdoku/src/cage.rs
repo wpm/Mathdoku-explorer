@@ -32,6 +32,7 @@ pub struct Cage {
 
 impl Cage {
     /// Creates a cage from a polyomino and an operation.
+    #[must_use]
     pub const fn new(polyomino: Polyomino, operation: Operation) -> Self {
         Self {
             polyomino,
@@ -92,7 +93,6 @@ impl PartialOrd for Cage {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::test_utils::{col_pair, l_shape, pair, singleton};

@@ -217,7 +217,6 @@ fn grid_neighbors(cell: Cell, n: usize) -> impl Iterator<Item = Cell> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;

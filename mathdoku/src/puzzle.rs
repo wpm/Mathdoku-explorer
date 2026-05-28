@@ -49,6 +49,7 @@ impl Puzzle {
     }
 
     /// Returns the grid size `n` (puzzle is `n`×`n`).
+    #[must_use]
     pub const fn n(&self) -> usize {
         self.n
     }
@@ -128,7 +129,6 @@ impl<'de> Deserialize<'de> for Puzzle {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use serde_json::{from_str, to_string};
 
