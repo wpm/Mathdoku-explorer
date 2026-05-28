@@ -56,7 +56,7 @@ pub fn Puzzle(
         .collect();
 
     let cage_cells: Vec<Vec<Cell>> = cages.iter().map(|(c, _)| c.clone()).collect();
-    let (colors, cage_index) = assign_colors(n, &cage_cells);
+    let (colors, cage_index) = assign_colors(n, &cage_cells, CAGE_PALETTE.len());
 
     // Propagate cage constraints from an unconstrained grid so each cell's
     // values show all candidates still possible given the cages, not just the solution.
