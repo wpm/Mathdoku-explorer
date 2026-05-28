@@ -466,279 +466,1502 @@ pub fn apply_loaded(state: &mut AppState, json: &str) -> Result<State, Error> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::panic)]
+#[allow(clippy::unwrap_used, clippy::panic, clippy::cast_possible_truncation)]
 mod tests {
-    use super::{
-        AppState, Error, SAVE_VERSION, SaveEnvelope, State, apply_loaded, fix, get_doc_state,
-        get_puzzle, insert_cage, new_empty, new_latin_square, serialize_save, unfix,
-    };
-    use mathdoku::{Cage, Cell, Grid, Operation, Operator, Polyomino, Puzzle};
-    use serde_json::{from_str, to_string};
+    //! Tests for the Designer command bodies.
+    //!
+    //! Organized into named submodules by concern. The 23 tests migrated in #47
+    //! keep their original names (now nested under a submodule) and remain
+    //! searchable.
+    //!
+    //! Several tests assert *current* behaviour that diverges from #55's stated
+    //! expectation; each is marked `// TODO(#NN)` against the tracking issue.
+    //! Per #55 this PR is tests-only and does not fix the underlying behaviour.
 
-    fn cage_at(positions: &[(usize, usize)], op: Operator, target: u64) -> Cage {
-        let cells: Vec<Cell> = positions.iter().map(|&(r, c)| Cell::new(r, c)).collect();
-        let poly = Polyomino::from_cells(&cells).unwrap();
-        Cage::new(poly, Operation::new(op, target))
-    }
+    /// Shared fixtures.
+    mod helpers {
+        use crate::{AppState, State, new_empty};
+        use mathdoku::{Cage, Cell, Grid, Operation, Operator, Polyomino, Puzzle};
 
-    // ---- State constructors / mode transitions ----
+        /// Builds a [`Cage`] from `(row, column)` positions, an operator, and a target.
+        pub(super) fn cage_at(positions: &[(usize, usize)], op: Operator, target: u64) -> Cage {
+            let cells: Vec<Cell> = positions.iter().map(|&(r, c)| Cell::new(r, c)).collect();
+            let poly = Polyomino::from_cells(&cells).unwrap();
+            Cage::new(poly, Operation::new(op, target))
+        }
 
-    #[test]
-    fn new_is_without_solution() {
-        let st = State::new(4).unwrap();
-        assert!(st.solution.is_none());
-        assert_eq!(st.puzzle.n(), 4);
-    }
+        /// Builds [`Cell`]s from `(row, column)` positions.
+        pub(super) fn cells(positions: &[(usize, usize)]) -> Vec<Cell> {
+            positions.iter().map(|&(r, c)| Cell::new(r, c)).collect()
+        }
 
-    #[test]
-    fn new_with_solution_is_with_solution() {
-        let st = State::new_with_solution(4).unwrap();
-        assert!(st.solution.is_some());
-    }
+        /// Every cell of an `n`×`n` grid in row-major order.
+        pub(super) fn all_cells(n: usize) -> Vec<Cell> {
+            (0..n)
+                .flat_map(|r| (0..n).map(move |c| Cell::new(r, c)))
+                .collect()
+        }
 
-    #[test]
-    fn unfix_drops_the_solution() {
-        let mut st = State::new_with_solution(4).unwrap();
-        st.unfix();
-        assert!(st.solution.is_none());
-    }
+        /// A 3×3 puzzle pinned to the Latin square
+        /// ```text
+        /// 1 2 3
+        /// 2 3 1
+        /// 3 1 2
+        /// ```
+        /// by nine `Given` cages — exactly one completion.
+        pub(super) fn unique_3x3() -> State {
+            let mut st = State::new(3).unwrap();
+            let square = [[1u64, 2, 3], [2, 3, 1], [3, 1, 2]];
+            for (r, row) in square.iter().enumerate() {
+                for (c, &v) in row.iter().enumerate() {
+                    st.puzzle = st
+                        .puzzle
+                        .insert_cage(cage_at(&[(r, c)], Operator::Given, v))
+                        .unwrap();
+                }
+            }
+            st
+        }
 
-    /// A 3×3 puzzle pinned to the Latin square
-    /// ```text
-    /// 1 2 3
-    /// 2 3 1
-    /// 3 1 2
-    /// ```
-    /// by nine `Given` cages — exactly one completion.
-    fn unique_3x3() -> State {
-        let mut st = State::new(3).unwrap();
-        let square = [[1u64, 2, 3], [2, 3, 1], [3, 1, 2]];
-        for (r, row) in square.iter().enumerate() {
-            for (c, &v) in row.iter().enumerate() {
-                st.puzzle = st
-                    .puzzle
-                    .insert_cage(cage_at(&[(r, c)], Operator::Given, v))
-                    .unwrap();
+        /// The canonical 3×3 Latin square used by the target-derivation tests:
+        /// ```text
+        /// 1 2 3
+        /// 2 3 1
+        /// 3 1 2
+        /// ```
+        pub(super) fn known_3x3_solution() -> Grid {
+            let square = vec![vec![1u8, 2, 3], vec![2, 3, 1], vec![3, 1, 2]];
+            Grid::from_latin_square(3, &square).unwrap()
+        }
+
+        /// A With-Solution [`AppState`] whose solution is [`known_3x3_solution`]
+        /// and whose puzzle has no cages yet.
+        pub(super) fn with_solution_3x3() -> AppState {
+            let solution = known_3x3_solution();
+            AppState {
+                puzzle: Some(Puzzle::new(3).unwrap()),
+                solution: Some(solution.clone()),
+                current: Some(solution),
+                ..AppState::default()
             }
         }
-        st
-    }
 
-    #[test]
-    fn fix_snapshots_unique_completion() {
-        let mut st = unique_3x3();
-        assert!(st.fix().is_ok());
-        let solution = st.solution.unwrap();
-        assert_eq!(
-            solution.cell_values(Cell::new(0, 0)).unwrap().values(),
-            vec![1]
-        );
-        assert_eq!(
-            solution.cell_values(Cell::new(1, 0)).unwrap().values(),
-            vec![2]
-        );
-    }
-
-    #[test]
-    fn fix_fails_when_not_unique() {
-        // Three row-sum cages: every order-3 Latin square is a completion (12 of them).
-        let mut st = State::new(3).unwrap();
-        for r in 0..3 {
-            st.puzzle = st
-                .puzzle
-                .insert_cage(cage_at(&[(r, 0), (r, 1), (r, 2)], Operator::Add, 6))
-                .unwrap();
+        /// A fresh Without-Solution `n`×`n` [`AppState`].
+        pub(super) fn without_solution(n: usize) -> AppState {
+            let mut state = AppState::default();
+            let _ = new_empty(&mut state, n).unwrap();
+            state
         }
-        assert!(matches!(st.fix(), Err(Error::NotUnique)));
-        assert!(st.solution.is_none());
     }
 
-    #[test]
-    fn fix_then_unfix_round_trips_mode() {
-        let mut st = unique_3x3();
-        st.fix().unwrap();
-        assert!(st.solution.is_some());
-        st.unfix();
-        assert!(st.solution.is_none());
+    // ---- State constructors / mode transitions (migrated from #47) ----
+
+    mod state_transitions {
+        use super::helpers::{cage_at, unique_3x3};
+        use crate::{Error, State};
+        use mathdoku::{Cell, Operator};
+        use serde_json::{from_str, to_string};
+
+        #[test]
+        fn new_is_without_solution() {
+            let st = State::new(4).unwrap();
+            assert!(st.solution.is_none());
+            assert_eq!(st.puzzle.n(), 4);
+        }
+
+        #[test]
+        fn new_with_solution_is_with_solution() {
+            let st = State::new_with_solution(4).unwrap();
+            assert!(st.solution.is_some());
+        }
+
+        #[test]
+        fn unfix_drops_the_solution() {
+            let mut st = State::new_with_solution(4).unwrap();
+            st.unfix();
+            assert!(st.solution.is_none());
+        }
+
+        #[test]
+        fn fix_snapshots_unique_completion() {
+            let mut st = unique_3x3();
+            assert!(st.fix().is_ok());
+            let solution = st.solution.unwrap();
+            assert_eq!(
+                solution.cell_values(Cell::new(0, 0)).unwrap().values(),
+                vec![1]
+            );
+            assert_eq!(
+                solution.cell_values(Cell::new(1, 0)).unwrap().values(),
+                vec![2]
+            );
+        }
+
+        #[test]
+        fn fix_fails_when_not_unique() {
+            // Three row-sum cages: every order-3 Latin square is a completion (12 of them).
+            let mut st = State::new(3).unwrap();
+            for r in 0..3 {
+                st.puzzle = st
+                    .puzzle
+                    .insert_cage(cage_at(&[(r, 0), (r, 1), (r, 2)], Operator::Add, 6))
+                    .unwrap();
+            }
+            assert!(matches!(st.fix(), Err(Error::NotUnique)));
+            assert!(st.solution.is_none());
+        }
+
+        #[test]
+        fn fix_then_unfix_round_trips_mode() {
+            let mut st = unique_3x3();
+            st.fix().unwrap();
+            assert!(st.solution.is_some());
+            st.unfix();
+            assert!(st.solution.is_none());
+        }
+
+        #[test]
+        fn serde_round_trip_without_solution() {
+            let st = State::new(4).unwrap();
+            let json = to_string(&st).unwrap();
+            // The omitted-field form keeps Without-Solution JSON clean.
+            assert!(!json.contains("\"solution\""));
+            let restored: State = from_str(&json).unwrap();
+            assert!(restored.solution.is_none());
+            assert_eq!(restored.puzzle, st.puzzle);
+            assert_eq!(restored.current, st.current);
+            assert_eq!(restored.active, st.active);
+            assert_eq!(restored.provisional_cages, st.provisional_cages);
+        }
+
+        #[test]
+        fn serde_round_trip_with_solution() {
+            let st = State::new_with_solution(4).unwrap();
+            let json = to_string(&st).unwrap();
+            assert!(json.contains("\"solution\""));
+            let restored: State = from_str(&json).unwrap();
+            assert!(restored.solution.is_some());
+            assert_eq!(restored.puzzle, st.puzzle);
+            assert_eq!(restored.solution.map(|g| g.n()), st.solution.map(|g| g.n()));
+        }
     }
 
-    #[test]
-    fn serde_round_trip_without_solution() {
-        let st = State::new(4).unwrap();
-        let json = to_string(&st).unwrap();
-        // The omitted-field form keeps Without-Solution JSON clean.
-        assert!(!json.contains("\"solution\""));
-        let restored: State = from_str(&json).unwrap();
-        assert!(restored.solution.is_none());
-        assert_eq!(restored.puzzle, st.puzzle);
-        assert_eq!(restored.current, st.current);
-        assert_eq!(restored.active, st.active);
-        assert_eq!(restored.provisional_cages, st.provisional_cages);
-    }
+    // ---- Category 1: command-body error paths ----
 
-    #[test]
-    fn serde_round_trip_with_solution() {
-        let st = State::new_with_solution(4).unwrap();
-        let json = to_string(&st).unwrap();
-        assert!(json.contains("\"solution\""));
-        let restored: State = from_str(&json).unwrap();
-        assert!(restored.solution.is_some());
-        assert_eq!(restored.puzzle, st.puzzle);
-        assert_eq!(restored.solution.map(|g| g.n()), st.solution.map(|g| g.n()));
-    }
-
-    // ---- new_empty ----
-
-    #[test]
-    fn new_empty_sets_puzzle_and_dirty() {
-        let mut state = AppState::default();
-        let result = new_empty(&mut state, 4).unwrap();
-        assert_eq!(result.puzzle.n(), 4);
-        // Without-Solution mode: no solution snapshot.
-        assert!(result.solution.is_none());
-        assert!(state.puzzle.is_some());
-        assert!(state.solution.is_none());
-        assert!(state.dirty);
-        assert!(state.path.is_none());
-    }
-
-    #[test]
-    fn new_empty_clears_existing_path() {
-        let mut state = AppState {
-            path: Some("/old/path.mathdoku".to_string()),
-            ..AppState::default()
+    mod command_errors {
+        use super::helpers::cells;
+        use crate::{
+            AppState, Error, SaveEnvelope, apply_loaded, fix, insert_cage, new_empty,
+            new_latin_square, remove_cage, serialize_save, unfix,
         };
-        let _ = new_empty(&mut state, 4).unwrap();
-        assert!(state.path.is_none());
+        use mathdoku::{Cell, Operator, Puzzle};
+        use rand::{SeedableRng, rngs::StdRng};
+        use serde_json::to_string;
+
+        // --- insert_cage ---
+
+        #[test]
+        fn insert_cage_no_puzzle_errors() {
+            let mut state = AppState::default();
+            let r = insert_cage(&mut state, &[Cell::new(0, 0)], Operator::Given, Some(1));
+            assert!(matches!(r, Err(Error::NoPuzzle)));
+        }
+
+        #[test]
+        fn insert_cage_disconnected_polyomino_is_mathdoku_error() {
+            let mut state = AppState::default();
+            let _ = new_empty(&mut state, 4).unwrap();
+            let r = insert_cage(
+                &mut state,
+                &cells(&[(0, 0), (2, 2)]),
+                Operator::Add,
+                Some(3),
+            );
+            assert!(matches!(
+                r,
+                Err(Error::Mathdoku(mathdoku::Error::DisconnectedPolyomino))
+            ));
+        }
+
+        #[test]
+        fn insert_cage_overlap_is_region_conflict() {
+            let mut state = AppState::default();
+            let _ = new_empty(&mut state, 4).unwrap();
+            let _ = insert_cage(
+                &mut state,
+                &cells(&[(0, 0), (0, 1)]),
+                Operator::Add,
+                Some(3),
+            )
+            .unwrap();
+            let r = insert_cage(&mut state, &cells(&[(0, 0)]), Operator::Given, Some(1));
+            // TODO(#68): #55 expected `CageConflict`, but an overlapping region
+            // surfaces as the mathdoku-level `RegionConflict` (the variant
+            // actually produced — `CageConflict` is never constructed).
+            assert!(matches!(
+                r,
+                Err(Error::Mathdoku(mathdoku::Error::RegionConflict(_)))
+            ));
+        }
+
+        #[test]
+        fn insert_cage_subtract_on_three_cells_currently_succeeds() {
+            // TODO(#68): #55 expects Err(InvalidOperationArity). insert_cage does
+            // no arity validation: the cage is committed and the three cells
+            // collapse to empty domains. Asserting current behaviour.
+            let mut state = AppState::default();
+            let _ = new_empty(&mut state, 4).unwrap();
+            let region = cells(&[(0, 0), (0, 1), (0, 2)]);
+            let st = insert_cage(&mut state, &region, Operator::Subtract, Some(1)).unwrap();
+            for &cell in &region {
+                assert!(st.current.cell_values(cell).unwrap().is_empty());
+            }
+        }
+
+        #[test]
+        fn insert_cage_given_on_two_cells_currently_succeeds() {
+            // TODO(#68): #55 expects an arity error; insert_cage commits the cage
+            // and both cells collapse to empty domains instead.
+            let mut state = AppState::default();
+            let _ = new_empty(&mut state, 4).unwrap();
+            let region = cells(&[(0, 0), (0, 1)]);
+            let st = insert_cage(&mut state, &region, Operator::Given, Some(2)).unwrap();
+            assert!(st.current.cell_values(region[0]).unwrap().is_empty());
+            assert!(st.current.cell_values(region[1]).unwrap().is_empty());
+        }
+
+        #[test]
+        fn insert_cage_infeasible_target_currently_succeeds() {
+            // TODO(#68): #55 expects Err(InfeasibleOperation). Two distinct
+            // collinear cells cannot sum to 2, but insert_cage commits the cage
+            // and prunes the cells to empty domains.
+            let mut state = AppState::default();
+            let _ = new_empty(&mut state, 3).unwrap();
+            let region = cells(&[(0, 0), (0, 1)]);
+            let st = insert_cage(&mut state, &region, Operator::Add, Some(2)).unwrap();
+            assert!(st.current.cell_values(region[0]).unwrap().is_empty());
+        }
+
+        // --- remove_cage ---
+
+        #[test]
+        fn remove_cage_no_puzzle_errors() {
+            let mut state = AppState::default();
+            assert!(matches!(
+                remove_cage(&mut state, &cells(&[(0, 0)])),
+                Err(Error::NoPuzzle)
+            ));
+        }
+
+        #[test]
+        fn remove_cage_unknown_cell_set_is_cage_not_found() {
+            let mut state = AppState::default();
+            let _ = new_empty(&mut state, 4).unwrap();
+            let _ = insert_cage(&mut state, &cells(&[(0, 0)]), Operator::Given, Some(1)).unwrap();
+            assert!(matches!(
+                remove_cage(&mut state, &cells(&[(1, 1)])),
+                Err(Error::CageNotFound)
+            ));
+        }
+
+        #[test]
+        fn remove_cage_disconnected_cells_is_cage_not_found() {
+            // TODO(#68): #55 expected a mathdoku polyomino error here. remove_cage
+            // never builds a Polyomino from `cells`; a disconnected set simply
+            // matches no committed cage.
+            let mut state = AppState::default();
+            let _ = new_empty(&mut state, 4).unwrap();
+            let _ = insert_cage(&mut state, &cells(&[(0, 0)]), Operator::Given, Some(1)).unwrap();
+            assert!(matches!(
+                remove_cage(&mut state, &cells(&[(0, 0), (2, 2)])),
+                Err(Error::CageNotFound)
+            ));
+        }
+
+        // --- fix ---
+
+        #[test]
+        fn fix_no_puzzle_errors() {
+            let mut state = AppState::default();
+            assert!(matches!(fix(&mut state), Err(Error::NoPuzzle)));
+        }
+
+        #[test]
+        fn fix_errs_when_not_unique() {
+            let mut state = AppState::default();
+            // An empty 3×3 Without-Solution puzzle has many completions.
+            let _ = new_empty(&mut state, 3).unwrap();
+            assert!(fix(&mut state).is_err());
+        }
+
+        #[test]
+        fn fix_zero_completions_is_not_unique() {
+            // Over-constrained: two `Given` cells in the same row both fixed to 1
+            // admits no completion. `fix` requires exactly one, so it reports
+            // NotUnique (confirming the "exactly one completion" wording covers
+            // the zero-completion case too).
+            let mut state = AppState::default();
+            let _ = new_empty(&mut state, 3).unwrap();
+            let _ = insert_cage(&mut state, &cells(&[(0, 0)]), Operator::Given, Some(1)).unwrap();
+            let _ = insert_cage(&mut state, &cells(&[(0, 1)]), Operator::Given, Some(1)).unwrap();
+            assert!(matches!(fix(&mut state), Err(Error::NotUnique)));
+        }
+
+        #[test]
+        fn fix_multiple_completions_is_not_unique() {
+            // A higher-arity row-sum cage on a 4×4 still leaves many completions.
+            let mut state = AppState::default();
+            let _ = new_empty(&mut state, 4).unwrap();
+            let _ = insert_cage(
+                &mut state,
+                &cells(&[(0, 0), (0, 1), (0, 2), (0, 3)]),
+                Operator::Add,
+                Some(10),
+            )
+            .unwrap();
+            assert!(matches!(fix(&mut state), Err(Error::NotUnique)));
+        }
+
+        // --- unfix ---
+
+        #[test]
+        fn unfix_no_puzzle_errors() {
+            let mut state = AppState::default();
+            assert!(matches!(unfix(&mut state), Err(Error::NoPuzzle)));
+        }
+
+        #[test]
+        fn unfix_on_without_solution_is_idempotent() {
+            let mut state = AppState::default();
+            let _ = new_empty(&mut state, 4).unwrap();
+            assert!(state.solution.is_none());
+            let st = unfix(&mut state).unwrap();
+            assert!(st.solution.is_none());
+            assert!(state.solution.is_none());
+        }
+
+        // --- new_empty / new_latin_square invalid sizes ---
+
+        #[test]
+        fn new_empty_rejects_invalid_size() {
+            let mut state = AppState::default();
+            assert!(new_empty(&mut state, 0).is_err());
+        }
+
+        #[test]
+        fn new_empty_rejects_n_too_large() {
+            let mut state = AppState::default();
+            assert!(matches!(
+                new_empty(&mut state, 10),
+                Err(Error::Mathdoku(mathdoku::Error::InvalidGridSize(10)))
+            ));
+        }
+
+        #[test]
+        fn new_latin_square_rejects_zero() {
+            let mut state = AppState::default();
+            let mut rng = StdRng::seed_from_u64(1);
+            assert!(matches!(
+                new_latin_square(&mut state, 0, &mut rng),
+                Err(Error::Mathdoku(mathdoku::Error::InvalidGridSize(0)))
+            ));
+        }
+
+        #[test]
+        fn new_latin_square_rejects_n_too_large() {
+            let mut state = AppState::default();
+            let mut rng = StdRng::seed_from_u64(1);
+            assert!(matches!(
+                new_latin_square(&mut state, 10, &mut rng),
+                Err(Error::Mathdoku(mathdoku::Error::InvalidGridSize(10)))
+            ));
+        }
+
+        // --- serialize_save / apply_loaded ---
+
+        #[test]
+        fn serialize_save_errors_when_no_puzzle() {
+            let state = AppState::default();
+            assert!(matches!(serialize_save(&state), Err(Error::NoPuzzle)));
+        }
+
+        #[test]
+        fn serialize_save_succeeds_after_unfix() {
+            // After a With-Solution puzzle is unfixed, serialize_save still works
+            // and omits the (now-absent) solution key.
+            let mut state = AppState::default();
+            let mut rng = StdRng::seed_from_u64(3);
+            let _ = new_latin_square(&mut state, 3, &mut rng).unwrap();
+            let _ = unfix(&mut state).unwrap();
+            let json = serialize_save(&state).unwrap();
+            assert!(!json.contains("\"solution\""));
+        }
+
+        #[test]
+        fn apply_loaded_rejects_wrong_version() {
+            let envelope = SaveEnvelope {
+                version: 99,
+                puzzle: Puzzle::new(3).unwrap(),
+                solution: None,
+            };
+            let json = to_string(&envelope).unwrap();
+            let mut state = AppState::default();
+            assert!(matches!(
+                apply_loaded(&mut state, &json),
+                Err(Error::UnsupportedVersion(99))
+            ));
+        }
+
+        #[test]
+        fn apply_loaded_rejects_version_zero() {
+            let envelope = SaveEnvelope {
+                version: 0,
+                puzzle: Puzzle::new(3).unwrap(),
+                solution: None,
+            };
+            let json = to_string(&envelope).unwrap();
+            let mut state = AppState::default();
+            assert!(matches!(
+                apply_loaded(&mut state, &json),
+                Err(Error::UnsupportedVersion(0))
+            ));
+        }
+
+        #[test]
+        fn apply_loaded_rejects_malformed_json() {
+            let mut state = AppState::default();
+            assert!(matches!(
+                apply_loaded(&mut state, "not json"),
+                Err(Error::Serde(_))
+            ));
+        }
+
+        #[test]
+        fn apply_loaded_out_of_bounds_cage_cell_is_invalid_cell() {
+            // #55 guessed `Serde`, but a syntactically valid envelope whose cage
+            // references a cell outside the grid parses fine and is caught during
+            // constraint propagation — surfacing as Mathdoku(InvalidCell), the
+            // correct behaviour.
+            let json = r#"{"version":1,"puzzle":{"n":3,"cages":[{"polyomino":[{"row":5,"column":5}],"operation":{"operator":"Given","target":1}}]}}"#;
+            let mut state = AppState::default();
+            assert!(matches!(
+                apply_loaded(&mut state, json),
+                Err(Error::Mathdoku(mathdoku::Error::InvalidCell(_)))
+            ));
+        }
+
+        #[test]
+        fn apply_loaded_invalid_puzzle_size_is_serde() {
+            // Puzzle's Deserialize rejects n outside 1..=9, so this fails at parse
+            // time (a genuine Serde error) rather than during propagation.
+            let json = r#"{"version":1,"puzzle":{"n":0,"cages":[]}}"#;
+            let mut state = AppState::default();
+            assert!(matches!(
+                apply_loaded(&mut state, json),
+                Err(Error::Serde(_))
+            ));
+        }
+
+        #[test]
+        fn apply_loaded_missing_version_field_is_serde() {
+            // `version` is a required envelope field with no serde default.
+            let json = r#"{"puzzle":{"n":3,"cages":[]}}"#;
+            let mut state = AppState::default();
+            assert!(matches!(
+                apply_loaded(&mut state, json),
+                Err(Error::Serde(_))
+            ));
+        }
     }
 
-    #[test]
-    fn new_empty_rejects_invalid_size() {
-        let mut state = AppState::default();
-        assert!(new_empty(&mut state, 0).is_err());
+    // ---- Category 2: state invariants after each command ----
+
+    mod invariants {
+        use super::helpers::{all_cells, cells, with_solution_3x3};
+        use crate::{AppState, fix, insert_cage, new_empty, new_latin_square, remove_cage, unfix};
+        use mathdoku::{Cell, Grid, Values};
+        use rand::{SeedableRng, rngs::StdRng};
+
+        #[test]
+        fn new_empty_sets_puzzle_and_dirty() {
+            let mut state = AppState::default();
+            let result = new_empty(&mut state, 4).unwrap();
+            assert_eq!(result.puzzle.n(), 4);
+            // Without-Solution mode: no solution snapshot.
+            assert!(result.solution.is_none());
+            assert!(state.puzzle.is_some());
+            assert!(state.solution.is_none());
+            assert!(state.dirty);
+            assert!(state.path.is_none());
+        }
+
+        #[test]
+        fn new_empty_clears_existing_path() {
+            let mut state = AppState {
+                path: Some("/old/path.mathdoku".to_string()),
+                ..AppState::default()
+            };
+            let _ = new_empty(&mut state, 4).unwrap();
+            assert!(state.path.is_none());
+        }
+
+        #[test]
+        fn new_empty_establishes_invariants() {
+            let mut state = AppState::default();
+            let _ = new_empty(&mut state, 4).unwrap();
+            assert!(state.puzzle.is_some());
+            assert!(state.solution.is_none());
+            assert!(state.current.is_some());
+            // current is unconstrained: every cell holds the full value set.
+            let current = state.current.as_ref().unwrap();
+            for cell in all_cells(4) {
+                assert_eq!(current.cell_values(cell).unwrap(), Values::all(4));
+            }
+            assert!(state.path.is_none());
+            assert!(state.dirty);
+            assert!(state.active.is_none());
+        }
+
+        #[test]
+        fn new_latin_square_establishes_invariants() {
+            let mut state = AppState::default();
+            let mut rng = StdRng::seed_from_u64(99);
+            let _ = new_latin_square(&mut state, 4, &mut rng).unwrap();
+            assert!(state.puzzle.is_some());
+            assert!(state.solution.is_some());
+            // current == solution initially.
+            assert_eq!(state.current, state.solution);
+            assert!(state.path.is_none());
+            assert!(state.dirty);
+        }
+
+        #[test]
+        fn insert_cage_uses_author_target_without_solution() {
+            let mut state = AppState::default();
+            let _ = new_empty(&mut state, 4).unwrap();
+            let cells = [Cell::new(0, 0), Cell::new(0, 1)];
+            let st = insert_cage(&mut state, &cells, mathdoku::Operator::Add, Some(7)).unwrap();
+            let cage = st.puzzle.cages().next().unwrap();
+            assert_eq!(cage.operation().target, 7);
+            assert!(st.solution.is_none());
+        }
+
+        #[test]
+        fn insert_cage_with_solution_keeps_current_constrained() {
+            let mut state = with_solution_3x3();
+            let region = cells(&[(0, 0)]);
+            let st = insert_cage(&mut state, &region, mathdoku::Operator::Given, None).unwrap();
+            let puzzle = state.puzzle.as_ref().unwrap();
+            assert!(puzzle.cages().any(|c| c.cells() == region));
+            let expected = state.solution.as_ref().unwrap().constrain(puzzle).unwrap();
+            assert_eq!(state.current.as_ref().unwrap(), &expected);
+            assert!(state.dirty);
+            assert!(st.solution.is_some());
+        }
+
+        #[test]
+        fn insert_cage_without_solution_keeps_current_constrained() {
+            let mut state = AppState::default();
+            let _ = new_empty(&mut state, 4).unwrap();
+            let region = cells(&[(0, 0), (0, 1)]);
+            let _ = insert_cage(&mut state, &region, mathdoku::Operator::Add, Some(3)).unwrap();
+            let puzzle = state.puzzle.as_ref().unwrap();
+            assert!(puzzle.cages().any(|c| c.cells() == region));
+            let expected = Grid::new(4).unwrap().constrain(puzzle).unwrap();
+            assert_eq!(state.current.as_ref().unwrap(), &expected);
+            assert!(state.dirty);
+        }
+
+        #[test]
+        fn remove_cage_re_constrains_current() {
+            let mut state = AppState::default();
+            let _ = new_empty(&mut state, 4).unwrap();
+            let region = cells(&[(0, 0), (0, 1)]);
+            let _ = insert_cage(&mut state, &region, mathdoku::Operator::Add, Some(3)).unwrap();
+            let _ = insert_cage(
+                &mut state,
+                &cells(&[(1, 0)]),
+                mathdoku::Operator::Given,
+                Some(2),
+            )
+            .unwrap();
+            let _ = remove_cage(&mut state, &region).unwrap();
+            let puzzle = state.puzzle.as_ref().unwrap();
+            assert!(!puzzle.cages().any(|c| c.cells() == region));
+            assert!(puzzle.cages().any(|c| c.cells() == cells(&[(1, 0)])));
+            let expected = Grid::new(4).unwrap().constrain(puzzle).unwrap();
+            assert_eq!(state.current.as_ref().unwrap(), &expected);
+            assert!(state.dirty);
+        }
+
+        #[test]
+        fn fix_sets_solution_leaves_puzzle_and_current() {
+            let mut state = AppState::default();
+            let _ = new_empty(&mut state, 3).unwrap();
+            let square = [[1u64, 2, 3], [2, 3, 1], [3, 1, 2]];
+            for (r, row) in square.iter().enumerate() {
+                for (c, &v) in row.iter().enumerate() {
+                    let _ = insert_cage(
+                        &mut state,
+                        &cells(&[(r, c)]),
+                        mathdoku::Operator::Given,
+                        Some(v),
+                    )
+                    .unwrap();
+                }
+            }
+            let puzzle_before = state.puzzle.clone();
+            let current_before = state.current.clone();
+            let _ = fix(&mut state).unwrap();
+            assert!(state.solution.is_some());
+            assert_eq!(state.puzzle, puzzle_before);
+            assert_eq!(state.current, current_before);
+            assert!(state.dirty);
+            let sol = state.solution.as_ref().unwrap();
+            assert_eq!(
+                sol.cell_values(Cell::new(0, 0)).unwrap(),
+                Values::new(&[1]).unwrap()
+            );
+        }
+
+        #[test]
+        fn unfix_clears_solution() {
+            let mut state = AppState::default();
+            let _ = new_latin_square(&mut state, 3, &mut rand::rng()).unwrap();
+            let st = unfix(&mut state).unwrap();
+            assert!(st.solution.is_none());
+            assert!(state.solution.is_none());
+        }
+
+        #[test]
+        fn unfix_clears_solution_leaves_puzzle_and_current() {
+            let mut state = AppState::default();
+            let mut rng = StdRng::seed_from_u64(5);
+            let _ = new_latin_square(&mut state, 4, &mut rng).unwrap();
+            let puzzle_before = state.puzzle.clone();
+            let current_before = state.current.clone();
+            let _ = unfix(&mut state).unwrap();
+            assert!(state.solution.is_none());
+            assert_eq!(state.puzzle, puzzle_before);
+            assert_eq!(state.current, current_before);
+            assert!(state.dirty);
+        }
+
+        #[test]
+        fn apply_loaded_clears_dirty_and_active_but_leaves_path() {
+            use crate::{apply_loaded, serialize_save};
+            use mathdoku::Puzzle;
+            let source = AppState {
+                puzzle: Some(Puzzle::new(5).unwrap()),
+                current: Some(Grid::new(5).unwrap()),
+                ..AppState::default()
+            };
+            let json = serialize_save(&source).unwrap();
+            let mut state = AppState {
+                path: Some("/x.mathdoku".to_string()),
+                dirty: true,
+                active: Some(Cell::new(2, 3)),
+                ..AppState::default()
+            };
+            let _ = apply_loaded(&mut state, &json).unwrap();
+            assert!(!state.dirty);
+            assert!(state.active.is_none());
+            // The core deliberately leaves `path` untouched — its doc states "the
+            // caller is responsible for recording the file path". #55's
+            // "path == None (the wrapper sets it)" is the wrapper-level
+            // post-condition, not the core's.
+            assert_eq!(state.path.as_deref(), Some("/x.mathdoku"));
+        }
     }
 
-    // ---- insert_cage target (Without-Solution mode) ----
+    // ---- Category 3: mode-transition chains ----
 
-    #[test]
-    fn insert_cage_uses_author_target_without_solution() {
-        let mut state = AppState::default();
-        let _ = new_empty(&mut state, 4).unwrap();
-        let cells = [Cell::new(0, 0), Cell::new(0, 1)];
-        let st = insert_cage(&mut state, &cells, Operator::Add, Some(7)).unwrap();
-        let cage = st.puzzle.cages().next().unwrap();
-        assert_eq!(cage.operation().target, 7);
-        assert!(st.solution.is_none());
+    mod mode_transitions {
+        use super::helpers::{all_cells, cells};
+        use crate::{AppState, Error, fix, insert_cage, new_empty, new_latin_square, unfix};
+        use mathdoku::{Cell, Operator};
+        use rand::{SeedableRng, rngs::StdRng};
+
+        #[test]
+        fn chain_new_empty_given_add_fix_unfix_multiply() {
+            // A 2×2 Latin square is uniquely determined by its top-left cell, so
+            // `fix` succeeds after only two cages.
+            let mut state = AppState::default();
+            let _ = new_empty(&mut state, 2).unwrap();
+            let _ = insert_cage(&mut state, &cells(&[(0, 0)]), Operator::Given, Some(1)).unwrap();
+            let _ = insert_cage(
+                &mut state,
+                &cells(&[(0, 1), (1, 1)]),
+                Operator::Add,
+                Some(3),
+            )
+            .unwrap();
+            let _ = fix(&mut state).unwrap();
+            assert!(state.solution.is_some());
+            let _ = unfix(&mut state).unwrap();
+            assert!(state.solution.is_none());
+            let _ =
+                insert_cage(&mut state, &cells(&[(1, 0)]), Operator::Multiply, Some(2)).unwrap();
+            let puzzle = state.puzzle.as_ref().unwrap();
+            assert_eq!(puzzle.cages().count(), 3);
+            assert!(state.solution.is_none());
+        }
+
+        #[test]
+        fn new_latin_square_unfix_fix_recovers_solution() {
+            // #55's literal chain (new_latin_square -> unfix -> fix with no cages)
+            // only recovers a unique solution for n=1, which has a single
+            // completion — but generate_latin_square(1) hangs (#67), and any n>=2
+            // cageless puzzle has many completions. So we pin the generated
+            // solution with Given cages first, then confirm the unfix -> fix
+            // round-trip recovers the identical grid.
+            let mut state = AppState::default();
+            let mut rng = StdRng::seed_from_u64(2024);
+            let _ = new_latin_square(&mut state, 3, &mut rng).unwrap();
+            let original = state.solution.clone().unwrap();
+            for cell in all_cells(3) {
+                let v = u64::from(original.cell_values(cell).unwrap().values()[0]);
+                let _ = insert_cage(&mut state, &[cell], Operator::Given, Some(v)).unwrap();
+            }
+            let _ = unfix(&mut state).unwrap();
+            assert!(state.solution.is_none());
+            let _ = fix(&mut state).unwrap();
+            assert_eq!(state.solution.as_ref(), Some(&original));
+        }
+
+        #[test]
+        fn new_latin_square_unfix_fix_without_cages_is_not_unique() {
+            // The literal #55 chain: a cageless 2×2 has multiple completions, so
+            // the unfix -> fix round-trip cannot recover a unique solution. (n=1,
+            // the only cageless-unique size, hangs in generate_latin_square — #67.)
+            let mut state = AppState::default();
+            let mut rng = StdRng::seed_from_u64(11);
+            let _ = new_latin_square(&mut state, 2, &mut rng).unwrap();
+            let _ = unfix(&mut state).unwrap();
+            assert!(matches!(fix(&mut state), Err(Error::NotUnique)));
+        }
+
+        #[test]
+        fn new_latin_square_insert_unfix_insert_fix() {
+            // Confirms target re-derivation across a mode flip: a With-Solution
+            // insert derives its target from the solution; after unfix, a second
+            // insert takes an author target; fix then recovers the original grid.
+            let mut state = AppState::default();
+            let mut rng = StdRng::seed_from_u64(7);
+            let _ = new_latin_square(&mut state, 2, &mut rng).unwrap();
+            let solution = state.solution.clone().unwrap();
+            let value_at = |r: usize, c: usize| {
+                u64::from(solution.cell_values(Cell::new(r, c)).unwrap().values()[0])
+            };
+
+            // With-Solution: target derived from the solution.
+            let st1 = insert_cage(&mut state, &cells(&[(0, 0)]), Operator::Given, None).unwrap();
+            let derived = st1
+                .puzzle
+                .cages()
+                .find(|c| c.cells() == cells(&[(0, 0)]))
+                .unwrap()
+                .operation()
+                .target;
+            assert_eq!(derived, value_at(0, 0));
+
+            let _ = unfix(&mut state).unwrap();
+            assert!(state.solution.is_none());
+
+            // Without-Solution: author supplies the target for a different cell.
+            let _ = insert_cage(
+                &mut state,
+                &cells(&[(0, 1)]),
+                Operator::Given,
+                Some(value_at(0, 1)),
+            )
+            .unwrap();
+
+            let _ = fix(&mut state).unwrap();
+            assert_eq!(state.solution.as_ref(), Some(&solution));
+        }
+
+        #[test]
+        fn fix_twice_is_idempotent_on_solution() {
+            let mut state = AppState::default();
+            let _ = new_empty(&mut state, 3).unwrap();
+            let square = [[1u64, 2, 3], [2, 3, 1], [3, 1, 2]];
+            for (r, row) in square.iter().enumerate() {
+                for (c, &val) in row.iter().enumerate() {
+                    let _ = insert_cage(&mut state, &cells(&[(r, c)]), Operator::Given, Some(val))
+                        .unwrap();
+                }
+            }
+            let _ = fix(&mut state).unwrap();
+            let solution_after_first = state.solution.clone();
+            let _ = fix(&mut state).unwrap();
+            assert_eq!(state.solution, solution_after_first);
+            assert!(state.solution.is_some());
+        }
     }
 
-    // ---- fix / unfix ----
+    // ---- Category 4: operator target derivation (With-Solution) ----
 
-    #[test]
-    fn fix_errs_when_not_unique() {
-        let mut state = AppState::default();
-        // An empty 3×3 Without-Solution puzzle has many completions.
-        let _ = new_empty(&mut state, 3).unwrap();
-        assert!(fix(&mut state).is_err());
+    mod target_derivation {
+        use super::helpers::{cells, with_solution_3x3};
+        use crate::insert_cage;
+        use mathdoku::Operator;
+
+        // Inserts a With-Solution cage (target derived from the solution) and
+        // returns the derived target. The solution is `known_3x3_solution`:
+        //   1 2 3 / 2 3 1 / 3 1 2
+        fn derived_target(op: Operator, region: &[(usize, usize)]) -> u64 {
+            let mut state = with_solution_3x3();
+            let region_cells = cells(region);
+            let st = insert_cage(&mut state, &region_cells, op, None).unwrap();
+            st.puzzle
+                .cages()
+                .find(|c| c.cells() == region_cells)
+                .unwrap()
+                .operation()
+                .target
+        }
+
+        #[test]
+        fn given_derives_cell_value() {
+            // (0,0) = 1.
+            assert_eq!(derived_target(Operator::Given, &[(0, 0)]), 1);
+        }
+
+        #[test]
+        fn add_derives_sum() {
+            // (0,0)=1 + (0,1)=2 = 3.
+            assert_eq!(derived_target(Operator::Add, &[(0, 0), (0, 1)]), 3);
+        }
+
+        #[test]
+        fn multiply_derives_product() {
+            // (0,0)=1 * (0,1)=2 = 2.
+            assert_eq!(derived_target(Operator::Multiply, &[(0, 0), (0, 1)]), 2);
+        }
+
+        #[test]
+        fn subtract_derives_absolute_difference() {
+            // |1 - 2| = 1.
+            assert_eq!(derived_target(Operator::Subtract, &[(0, 0), (0, 1)]), 1);
+        }
+
+        #[test]
+        fn divide_derives_quotient() {
+            // max(1,2) / min(1,2) = 2.
+            assert_eq!(derived_target(Operator::Divide, &[(0, 0), (0, 1)]), 2);
+        }
     }
 
-    #[test]
-    fn unfix_clears_solution() {
-        let mut state = AppState::default();
-        let _ = new_latin_square(&mut state, 3, &mut rand::rng()).unwrap();
-        let st = unfix(&mut state).unwrap();
-        assert!(st.solution.is_none());
-        assert!(state.solution.is_none());
-    }
+    // ---- Category 5: save-format wire stability ----
 
-    // ---- get_doc_state ----
-
-    #[test]
-    fn get_doc_state_returns_current_values() {
-        let state = AppState {
-            dirty: true,
-            path: Some("/some/path.mathdoku".to_string()),
-            ..AppState::default()
+    mod save_format {
+        use super::helpers::cells;
+        use crate::{
+            AppState, SAVE_VERSION, apply_loaded, insert_cage, new_empty, new_latin_square,
+            serialize_save,
         };
-        let doc = get_doc_state(&state);
-        assert!(doc.dirty);
-        assert_eq!(doc.path.as_deref(), Some("/some/path.mathdoku"));
+        use mathdoku::{Cell, Grid, Operator, Puzzle};
+        use rand::{SeedableRng, rngs::StdRng};
+
+        #[test]
+        fn save_version_is_one() {
+            assert_eq!(SAVE_VERSION, 1);
+        }
+
+        #[test]
+        fn serialize_save_apply_loaded_round_trips() {
+            let state = AppState {
+                puzzle: Some(Puzzle::new(5).unwrap()),
+                current: Some(Grid::new(5).unwrap()),
+                ..AppState::default()
+            };
+            let json = serialize_save(&state).unwrap();
+
+            let mut loaded = AppState::default();
+            let designer = apply_loaded(&mut loaded, &json).unwrap();
+            assert_eq!(designer.puzzle.n(), 5);
+            assert!(!loaded.dirty);
+            assert!(loaded.active.is_none());
+            assert_eq!(loaded.puzzle.unwrap().n(), 5);
+        }
+
+        #[test]
+        fn without_solution_save_omits_solution_key() {
+            let mut state = AppState::default();
+            let _ = new_empty(&mut state, 4).unwrap();
+            let _ = insert_cage(
+                &mut state,
+                &cells(&[(0, 0), (0, 1)]),
+                Operator::Add,
+                Some(3),
+            )
+            .unwrap();
+            let json = serialize_save(&state).unwrap();
+            assert!(!json.contains("\"solution\""));
+        }
+
+        #[test]
+        fn with_solution_save_contains_solution_key() {
+            let mut state = AppState::default();
+            let mut rng = StdRng::seed_from_u64(1);
+            let _ = new_latin_square(&mut state, 4, &mut rng).unwrap();
+            let json = serialize_save(&state).unwrap();
+            assert!(json.contains("\"solution\""));
+        }
+
+        #[test]
+        fn without_solution_round_trips_bit_identical() {
+            let mut source = AppState::default();
+            let _ = new_empty(&mut source, 4).unwrap();
+            let _ = insert_cage(
+                &mut source,
+                &cells(&[(0, 0), (0, 1)]),
+                Operator::Add,
+                Some(3),
+            )
+            .unwrap();
+            let json = serialize_save(&source).unwrap();
+            let mut loaded = AppState::default();
+            let _ = apply_loaded(&mut loaded, &json).unwrap();
+            assert_eq!(loaded.puzzle, source.puzzle);
+            assert_eq!(loaded.solution, source.solution);
+            assert_eq!(loaded.current, source.current);
+            assert_eq!(serialize_save(&loaded).unwrap(), json);
+        }
+
+        #[test]
+        fn with_solution_round_trips_bit_identical() {
+            let mut source = AppState::default();
+            let mut rng = StdRng::seed_from_u64(8);
+            let _ = new_latin_square(&mut source, 4, &mut rng).unwrap();
+            let json = serialize_save(&source).unwrap();
+            let mut loaded = AppState::default();
+            let _ = apply_loaded(&mut loaded, &json).unwrap();
+            assert_eq!(loaded.puzzle, source.puzzle);
+            assert_eq!(loaded.solution, source.solution);
+            assert_eq!(loaded.current, source.current);
+            assert_eq!(serialize_save(&loaded).unwrap(), json);
+        }
+
+        #[test]
+        fn minimal_hand_written_envelope_loads() {
+            // Pins the on-disk wire format against accidental drift.
+            let json = r#"{
+  "version": 1,
+  "puzzle": {
+    "n": 2,
+    "cages": [
+      {
+        "polyomino": [{"row": 0, "column": 0}],
+        "operation": {"operator": "Given", "target": 1}
+      }
+    ]
+  }
+}"#;
+            let mut state = AppState::default();
+            let designer = apply_loaded(&mut state, json).unwrap();
+            assert_eq!(designer.puzzle.n(), 2);
+            assert!(designer.solution.is_none());
+            assert_eq!(designer.puzzle.cages().count(), 1);
+            assert_eq!(
+                designer
+                    .current
+                    .cell_values(Cell::new(0, 0))
+                    .unwrap()
+                    .values(),
+                vec![1]
+            );
+        }
     }
 
-    #[test]
-    fn get_doc_state_default_is_clean_with_no_path() {
-        let state = AppState::default();
-        let doc = get_doc_state(&state);
-        assert!(!doc.dirty);
-        assert!(doc.path.is_none());
+    // ---- Category 6: deterministic generation ----
+
+    mod generation {
+        use crate::{AppState, new_latin_square};
+        use mathdoku::{Cell, Grid};
+        use rand::{SeedableRng, rngs::StdRng};
+
+        fn solution_for(n: usize, seed: u64) -> Grid {
+            let mut state = AppState::default();
+            let mut rng = StdRng::seed_from_u64(seed);
+            let _ = new_latin_square(&mut state, n, &mut rng).unwrap();
+            state.solution.unwrap()
+        }
+
+        fn is_valid_latin_square(grid: &Grid, n: usize) -> bool {
+            let expected: Vec<u8> = (1..=n as u8).collect();
+            for r in 0..n {
+                let mut row: Vec<u8> = (0..n)
+                    .map(|c| grid.cell_values(Cell::new(r, c)).unwrap().values()[0])
+                    .collect();
+                row.sort_unstable();
+                if row != expected {
+                    return false;
+                }
+            }
+            for c in 0..n {
+                let mut col: Vec<u8> = (0..n)
+                    .map(|r| grid.cell_values(Cell::new(r, c)).unwrap().values()[0])
+                    .collect();
+                col.sort_unstable();
+                if col != expected {
+                    return false;
+                }
+            }
+            true
+        }
+
+        #[test]
+        fn same_seed_same_solution() {
+            assert_eq!(solution_for(4, 42), solution_for(4, 42));
+        }
+
+        #[test]
+        fn different_seeds_differ() {
+            // Sanity check (not exhaustive): a spread of fixed seeds should not
+            // all collapse onto a single 4×4 square.
+            let grids: std::collections::HashSet<Grid> =
+                (1u64..=8).map(|seed| solution_for(4, seed)).collect();
+            assert!(grids.len() > 1, "every seed produced the same grid");
+        }
+
+        #[test]
+        fn generated_is_valid_latin_square_for_n_2_through_9() {
+            // n=1 is excluded: generate_latin_square(1) infinite-loops — see #67.
+            for n in 2..=9 {
+                let grid = solution_for(n, 100 + n as u64);
+                assert!(
+                    is_valid_latin_square(&grid, n),
+                    "n={n} is not a valid Latin square"
+                );
+            }
+        }
+
+        #[test]
+        #[ignore = "#67: generate_latin_square(1) infinite-loops; enable once fixed"]
+        fn generated_is_valid_latin_square_for_n_1() {
+            let grid = solution_for(1, 1);
+            assert!(is_valid_latin_square(&grid, 1));
+        }
     }
 
-    // ---- get_puzzle ----
+    // ---- Category 8: pre-condition and trivial-getter tests ----
 
-    #[test]
-    fn get_puzzle_returns_none_when_no_puzzle() {
-        let state = AppState::default();
-        assert!(get_puzzle(&state).is_none());
-    }
-
-    #[test]
-    fn get_puzzle_returns_puzzle_when_loaded() {
-        let mut state = AppState::default();
-        let _ = new_empty(&mut state, 6).unwrap();
-        let p = get_puzzle(&state).unwrap();
-        assert_eq!(p.puzzle.n(), 6);
-    }
-
-    // ---- serialize_save / apply_loaded seam ----
-
-    #[test]
-    fn serialize_save_apply_loaded_round_trips() {
-        let state = AppState {
-            puzzle: Some(Puzzle::new(5).unwrap()),
-            current: Some(Grid::new(5).unwrap()),
-            ..AppState::default()
+    mod getters {
+        use super::helpers::cells;
+        use crate::{
+            AppState, apply_loaded, get_doc_state, get_puzzle, insert_cage, new_empty,
+            serialize_save, set_active_cell,
         };
-        let json = serialize_save(&state).unwrap();
+        use mathdoku::{Cell, Grid, Operator, Puzzle};
 
-        let mut loaded = AppState::default();
-        let designer = apply_loaded(&mut loaded, &json).unwrap();
-        assert_eq!(designer.puzzle.n(), 5);
-        assert!(!loaded.dirty);
-        assert!(loaded.active.is_none());
-        assert_eq!(loaded.puzzle.unwrap().n(), 5);
+        #[test]
+        fn get_doc_state_returns_current_values() {
+            let state = AppState {
+                dirty: true,
+                path: Some("/some/path.mathdoku".to_string()),
+                ..AppState::default()
+            };
+            let doc = get_doc_state(&state);
+            assert!(doc.dirty);
+            assert_eq!(doc.path.as_deref(), Some("/some/path.mathdoku"));
+        }
+
+        #[test]
+        fn get_doc_state_default_is_clean_with_no_path() {
+            let state = AppState::default();
+            let doc = get_doc_state(&state);
+            assert!(!doc.dirty);
+            assert!(doc.path.is_none());
+        }
+
+        #[test]
+        fn get_puzzle_returns_none_when_no_puzzle() {
+            let state = AppState::default();
+            assert!(get_puzzle(&state).is_none());
+        }
+
+        #[test]
+        fn get_puzzle_returns_puzzle_when_loaded() {
+            let mut state = AppState::default();
+            let _ = new_empty(&mut state, 6).unwrap();
+            let p = get_puzzle(&state).unwrap();
+            assert_eq!(p.puzzle.n(), 6);
+        }
+
+        #[test]
+        fn get_puzzle_some_after_apply_loaded() {
+            let source = AppState {
+                puzzle: Some(Puzzle::new(3).unwrap()),
+                current: Some(Grid::new(3).unwrap()),
+                ..AppState::default()
+            };
+            let json = serialize_save(&source).unwrap();
+            let mut state = AppState::default();
+            let _ = apply_loaded(&mut state, &json).unwrap();
+            assert!(get_puzzle(&state).is_some());
+        }
+
+        #[test]
+        fn set_active_cell_updates_state_and_designer_state() {
+            let mut state = AppState::default();
+            let _ = new_empty(&mut state, 4).unwrap();
+            set_active_cell(&mut state, Cell::new(2, 3));
+            assert_eq!(state.active, Some(Cell::new(2, 3)));
+            let designer = state.to_designer_state().unwrap();
+            assert_eq!(designer.active, Cell::new(2, 3));
+        }
+
+        #[test]
+        fn to_designer_state_none_until_puzzle_and_current() {
+            let only_puzzle = AppState {
+                puzzle: Some(Puzzle::new(4).unwrap()),
+                ..AppState::default()
+            };
+            assert!(only_puzzle.to_designer_state().is_none());
+
+            let only_current = AppState {
+                current: Some(Grid::new(4).unwrap()),
+                ..AppState::default()
+            };
+            assert!(only_current.to_designer_state().is_none());
+
+            let both = AppState {
+                puzzle: Some(Puzzle::new(4).unwrap()),
+                current: Some(Grid::new(4).unwrap()),
+                ..AppState::default()
+            };
+            assert!(both.to_designer_state().is_some());
+        }
+
+        #[test]
+        fn to_designer_state_always_has_empty_provisional_cages() {
+            let mut state = AppState::default();
+            let _ = new_empty(&mut state, 4).unwrap();
+            let _ = insert_cage(
+                &mut state,
+                &cells(&[(0, 0), (0, 1)]),
+                Operator::Add,
+                Some(3),
+            )
+            .unwrap();
+            let designer = state.to_designer_state().unwrap();
+            assert!(designer.provisional_cages.is_empty());
+        }
     }
 
-    #[test]
-    fn serialize_save_errors_when_no_puzzle() {
-        let state = AppState::default();
-        assert!(matches!(serialize_save(&state), Err(Error::NoPuzzle)));
+    // ---- Category 9: cage-shape edge cases ----
+
+    mod cage_shapes {
+        use super::helpers::{cells, without_solution};
+        use crate::insert_cage;
+        use mathdoku::{Cell, Operator};
+
+        #[test]
+        fn single_cell_given_succeeds() {
+            let mut state = without_solution(4);
+            let region = cells(&[(0, 0)]);
+            let st = insert_cage(&mut state, &region, Operator::Given, Some(3)).unwrap();
+            assert!(st.puzzle.cages().any(|c| c.cells() == region));
+            assert!(!st.current.cell_values(Cell::new(0, 0)).unwrap().is_empty());
+        }
+
+        #[test]
+        fn row_pair_all_binary_operators_succeed() {
+            for (op, target) in [
+                (Operator::Add, 3),
+                (Operator::Subtract, 1),
+                (Operator::Multiply, 2),
+                (Operator::Divide, 2),
+            ] {
+                let mut state = without_solution(4);
+                let st =
+                    insert_cage(&mut state, &cells(&[(0, 0), (0, 1)]), op, Some(target)).unwrap();
+                assert_eq!(st.puzzle.cages().count(), 1);
+                assert!(!st.current.cell_values(Cell::new(0, 0)).unwrap().is_empty());
+            }
+        }
+
+        #[test]
+        fn column_pair_all_binary_operators_succeed() {
+            for (op, target) in [
+                (Operator::Add, 3),
+                (Operator::Subtract, 1),
+                (Operator::Multiply, 2),
+                (Operator::Divide, 2),
+            ] {
+                let mut state = without_solution(4);
+                let st =
+                    insert_cage(&mut state, &cells(&[(0, 0), (1, 0)]), op, Some(target)).unwrap();
+                assert_eq!(st.puzzle.cages().count(), 1);
+                assert!(!st.current.cell_values(Cell::new(0, 0)).unwrap().is_empty());
+            }
+        }
+
+        #[test]
+        fn row_triomino_add_and_multiply_succeed() {
+            for (op, target) in [(Operator::Add, 6), (Operator::Multiply, 6)] {
+                let mut state = without_solution(4);
+                let region = cells(&[(0, 0), (0, 1), (0, 2)]);
+                let st = insert_cage(&mut state, &region, op, Some(target)).unwrap();
+                assert!(!st.current.cell_values(Cell::new(0, 0)).unwrap().is_empty());
+            }
+        }
+
+        #[test]
+        fn l_shape_add_succeeds() {
+            let mut state = without_solution(4);
+            let region = cells(&[(0, 0), (1, 0), (1, 1)]);
+            let st = insert_cage(&mut state, &region, Operator::Add, Some(6)).unwrap();
+            assert!(!st.current.cell_values(Cell::new(0, 0)).unwrap().is_empty());
+        }
+
+        #[test]
+        fn t_shape_multiply_succeeds() {
+            // T-tetromino: (0,0),(0,1),(0,2),(1,1).
+            let mut state = without_solution(4);
+            let region = cells(&[(0, 0), (0, 1), (0, 2), (1, 1)]);
+            let st = insert_cage(&mut state, &region, Operator::Multiply, Some(24)).unwrap();
+            assert!(st.puzzle.cages().any(|c| c.cells() == region));
+            assert!(!st.current.cell_values(Cell::new(0, 0)).unwrap().is_empty());
+        }
+
+        #[test]
+        fn square_tetromino_add_succeeds() {
+            // 2×2 square block.
+            let mut state = without_solution(4);
+            let region = cells(&[(0, 0), (0, 1), (1, 0), (1, 1)]);
+            let st = insert_cage(&mut state, &region, Operator::Add, Some(10)).unwrap();
+            assert!(st.puzzle.cages().any(|c| c.cells() == region));
+            assert!(!st.current.cell_values(Cell::new(0, 0)).unwrap().is_empty());
+        }
+
+        #[test]
+        fn boundary_cages_succeed() {
+            // Corner and edge cages on a 3×3 — confirm no special-case bugs.
+            let mut state = without_solution(3);
+            let _ = insert_cage(&mut state, &cells(&[(2, 2)]), Operator::Given, Some(1)).unwrap();
+            let _ = insert_cage(
+                &mut state,
+                &cells(&[(0, 2), (1, 2)]),
+                Operator::Add,
+                Some(5),
+            )
+            .unwrap();
+            let st = insert_cage(
+                &mut state,
+                &cells(&[(2, 0), (2, 1)]),
+                Operator::Subtract,
+                Some(1),
+            )
+            .unwrap();
+            assert_eq!(st.puzzle.cages().count(), 3);
+        }
+
+        #[test]
+        fn triomino_given_currently_succeeds_with_empty_domains() {
+            // TODO(#68): #55 expects Err(InvalidOperationArity). insert_cage
+            // commits the cage; the cells collapse to empty domains instead.
+            let mut state = without_solution(4);
+            let region = cells(&[(0, 0), (0, 1), (0, 2)]);
+            let st = insert_cage(&mut state, &region, Operator::Given, Some(1)).unwrap();
+            assert!(st.current.cell_values(Cell::new(0, 0)).unwrap().is_empty());
+        }
+
+        #[test]
+        fn triomino_subtract_currently_succeeds_with_empty_domains() {
+            // TODO(#68): #55 expects Err(InvalidOperationArity).
+            let mut state = without_solution(4);
+            let region = cells(&[(0, 0), (0, 1), (0, 2)]);
+            let st = insert_cage(&mut state, &region, Operator::Subtract, Some(1)).unwrap();
+            assert!(st.current.cell_values(Cell::new(0, 0)).unwrap().is_empty());
+        }
     }
 
-    #[test]
-    fn apply_loaded_rejects_wrong_version() {
-        let envelope = SaveEnvelope {
-            version: 99,
-            puzzle: Puzzle::new(3).unwrap(),
-            solution: None,
+    // ---- Category 7: property tests ----
+
+    mod properties {
+        use crate::{
+            AppState, apply_loaded, insert_cage, new_empty, new_latin_square, remove_cage,
+            serialize_save, unfix,
         };
-        let json = to_string(&envelope).unwrap();
-        let mut state = AppState::default();
-        assert!(matches!(
-            apply_loaded(&mut state, &json),
-            Err(Error::UnsupportedVersion(99))
-        ));
-    }
+        use mathdoku::{Cell, Grid, Operator};
+        use proptest::prelude::*;
+        use rand::{SeedableRng, rngs::StdRng};
 
-    #[test]
-    fn apply_loaded_rejects_malformed_json() {
-        let mut state = AppState::default();
-        assert!(matches!(
-            apply_loaded(&mut state, "not json"),
-            Err(Error::Serde(_))
-        ));
-    }
+        #[derive(Debug, Clone)]
+        enum Op {
+            Given {
+                r: usize,
+                c: usize,
+                target: u64,
+            },
+            AddPair {
+                r: usize,
+                c: usize,
+                horizontal: bool,
+                target: u64,
+            },
+            Remove {
+                r: usize,
+                c: usize,
+            },
+        }
 
-    #[test]
-    fn save_version_is_one() {
-        assert_eq!(SAVE_VERSION, 1);
+        fn op_strategy(n: usize) -> impl Strategy<Value = Op> {
+            prop_oneof![
+                (0..n, 0..n, 1u64..=n as u64).prop_map(|(r, c, target)| Op::Given { r, c, target }),
+                (0..n, 0..n, any::<bool>(), 2u64..=2 * n as u64).prop_map(
+                    |(r, c, horizontal, target)| Op::AddPair {
+                        r,
+                        c,
+                        horizontal,
+                        target
+                    }
+                ),
+                (0..n, 0..n).prop_map(|(r, c)| Op::Remove { r, c }),
+            ]
+        }
+
+        // Generates a grid size and a short operation sequence for that size.
+        fn problem() -> impl Strategy<Value = (usize, Vec<Op>)> {
+            (2usize..=4).prop_flat_map(|n| (Just(n), prop::collection::vec(op_strategy(n), 0..=10)))
+        }
+
+        // Applies one operation, returning whether it succeeded.
+        fn apply(state: &mut AppState, op: &Op) -> bool {
+            match *op {
+                Op::Given { r, c, target } => {
+                    insert_cage(state, &[Cell::new(r, c)], Operator::Given, Some(target)).is_ok()
+                }
+                Op::AddPair {
+                    r,
+                    c,
+                    horizontal,
+                    target,
+                } => {
+                    let second = if horizontal {
+                        Cell::new(r, c + 1)
+                    } else {
+                        Cell::new(r + 1, c)
+                    };
+                    insert_cage(
+                        state,
+                        &[Cell::new(r, c), second],
+                        Operator::Add,
+                        Some(target),
+                    )
+                    .is_ok()
+                }
+                Op::Remove { r, c } => remove_cage(state, &[Cell::new(r, c)]).is_ok(),
+            }
+        }
+
+        // The core state invariant: `current` always equals the puzzle re-applied
+        // to either the fixed solution (With-Solution) or a fresh grid (Without).
+        fn assert_consistent(state: &AppState) {
+            let puzzle = state.puzzle.as_ref().unwrap();
+            let current = state.current.as_ref().unwrap();
+            let expected = state.solution.as_ref().map_or_else(
+                || Grid::new(puzzle.n()).unwrap().constrain(puzzle).unwrap(),
+                |sol| sol.constrain(puzzle).unwrap(),
+            );
+            assert_eq!(current, &expected);
+        }
+
+        // `fix`/`unfix` are deliberately excluded from the consistency generator:
+        // they flip mode without recomputing `current`, so the stated invariant
+        // does not hold across them. They are exercised by the dirty-flag property
+        // below (which only inspects `dirty`).
+
+        proptest! {
+            #![proptest_config(ProptestConfig {
+                cases: 64,
+                failure_persistence: None,
+                ..ProptestConfig::default()
+            })]
+
+            #[test]
+            fn prop_state_consistency(
+                (n, ops) in problem(),
+                seed in any::<u64>(),
+                latin in any::<bool>(),
+            ) {
+                // Generated ops always pass an explicit author target, so the
+                // With-Solution target-derivation path (target = None) is covered
+                // by Category 4, not here; this property only exercises the
+                // current/puzzle consistency invariant.
+                let mut state = AppState::default();
+                if latin {
+                    let mut rng = StdRng::seed_from_u64(seed);
+                    let _ = new_latin_square(&mut state, n, &mut rng).unwrap();
+                } else {
+                    let _ = new_empty(&mut state, n).unwrap();
+                }
+                assert_consistent(&state);
+                for op in &ops {
+                    if apply(&mut state, op) {
+                        assert_consistent(&state);
+                    }
+                }
+            }
+
+            #[test]
+            fn prop_round_trip_stability(
+                (n, ops) in problem(),
+                seed in any::<u64>(),
+                latin in any::<bool>(),
+            ) {
+                let mut state = AppState::default();
+                if latin {
+                    let mut rng = StdRng::seed_from_u64(seed);
+                    let _ = new_latin_square(&mut state, n, &mut rng).unwrap();
+                } else {
+                    let _ = new_empty(&mut state, n).unwrap();
+                }
+                for op in &ops {
+                    let _ = apply(&mut state, op);
+                }
+                let json = serialize_save(&state).unwrap();
+                let mut loaded = AppState::default();
+                let _ = apply_loaded(&mut loaded, &json).unwrap();
+                prop_assert_eq!(&loaded.puzzle, &state.puzzle);
+                prop_assert_eq!(&loaded.solution, &state.solution);
+                prop_assert_eq!(&loaded.current, &state.current);
+            }
+
+            #[test]
+            fn prop_dirty_monotonicity(
+                (n, ops) in problem(),
+                seed in any::<u64>(),
+                latin in any::<bool>(),
+                do_unfix in any::<bool>(),
+            ) {
+                let mut state = AppState::default();
+                if latin {
+                    let mut rng = StdRng::seed_from_u64(seed);
+                    let _ = new_latin_square(&mut state, n, &mut rng).unwrap();
+                } else {
+                    let _ = new_empty(&mut state, n).unwrap();
+                }
+                prop_assert!(state.dirty);
+                for op in &ops {
+                    if apply(&mut state, op) {
+                        prop_assert!(state.dirty);
+                    }
+                }
+                if do_unfix {
+                    // unfix always succeeds with a puzzle loaded and sets dirty.
+                    let _ = unfix(&mut state).unwrap();
+                    prop_assert!(state.dirty);
+                }
+                // apply_loaded is the only command that clears dirty.
+                let json = serialize_save(&state).unwrap();
+                let mut loaded = AppState::default();
+                let _ = apply_loaded(&mut loaded, &json).unwrap();
+                prop_assert!(!loaded.dirty);
+            }
+        }
     }
 }
