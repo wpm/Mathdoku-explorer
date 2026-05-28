@@ -29,6 +29,8 @@
 //! - **Cage arithmetic**: an MDD-based propagator computes per-cell GAC support in `O(|edges|)`
 //!   using the MDD-4R algorithm (top-down reachability + bottom-up co-reachability sweep).
 
+#![deny(missing_docs)]
+
 mod cage;
 mod cell;
 mod csp;

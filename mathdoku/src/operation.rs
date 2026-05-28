@@ -27,7 +27,9 @@ use std::fmt::{Display, Formatter};
 /// A [`Given`](Operator::Given) operation displays as just the target with no symbol.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Operation {
+    /// The arithmetic operator applied to the cage's cells.
     pub operator: Operator,
+    /// The numeric target the operator must reach.
     pub target: Target,
 }
 
