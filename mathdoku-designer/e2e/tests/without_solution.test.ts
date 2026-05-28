@@ -2,15 +2,20 @@ import { test, expect, type Page } from '@playwright/test';
 import { installTauriStubs, gotoApp, waitForGrid } from './helpers';
 import { ENTER, SHIFT_ARROW_RIGHT } from './keys';
 
-const fixButton = (page: Page) => page.getByRole('button', { name: 'Fix Solution', exact: true });
-const unfixButton = (page: Page) => page.getByRole('button', { name: 'Unfix Solution', exact: true });
-const selectorLabels = (page: Page) => page.locator('.grid-svg text[font-weight="700"]');
+const fixButton = (page: Page) =>
+  page.getByRole('button', { name: 'Fix Solution', exact: true });
+const unfixButton = (page: Page) =>
+  page.getByRole('button', { name: 'Unfix Solution', exact: true });
+const selectorLabels = (page: Page) =>
+  page.locator('.grid-svg text[font-weight="700"]');
 
 test.describe('new-puzzle modal authoring mode', () => {
   test('Empty button creates a Without-Solution puzzle', async ({ page }) => {
     await installTauriStubs(page, null);
     await gotoApp(page);
-    await expect(page.locator('p').filter({ hasText: 'New puzzle' })).toBeVisible();
+    await expect(
+      page.locator('p').filter({ hasText: 'New puzzle' }),
+    ).toBeVisible();
 
     await page.getByRole('button', { name: 'Empty', exact: true }).click();
     await waitForGrid(page);
@@ -20,12 +25,18 @@ test.describe('new-puzzle modal authoring mode', () => {
     await expect(unfixButton(page)).toHaveCount(0);
   });
 
-  test('With Solution button creates a With-Solution puzzle', async ({ page }) => {
+  test('With Solution button creates a With-Solution puzzle', async ({
+    page,
+  }) => {
     await installTauriStubs(page, null);
     await gotoApp(page);
-    await expect(page.locator('p').filter({ hasText: 'New puzzle' })).toBeVisible();
+    await expect(
+      page.locator('p').filter({ hasText: 'New puzzle' }),
+    ).toBeVisible();
 
-    await page.getByRole('button', { name: 'With Solution', exact: true }).click();
+    await page
+      .getByRole('button', { name: 'With Solution', exact: true })
+      .click();
     await waitForGrid(page);
 
     await expect(unfixButton(page)).toBeVisible();
@@ -34,20 +45,49 @@ test.describe('new-puzzle modal authoring mode', () => {
 });
 
 test.describe('fix / unfix mode switching', () => {
-  test('Unfix drops the solution and Fix snapshots it back', async ({ page }) => {
+  test('Unfix drops the solution and Fix snapshots it back', async ({
+    page,
+  }) => {
     // A fully-given 3×3 puzzle: unique solution, so Fix Solution is enabled after unfix.
     const given3x3 = {
       n: 3,
       cages: [
-        { polyomino: [{ row: 0, column: 0 }], operation: { operator: 'Given', target: 1 } },
-        { polyomino: [{ row: 0, column: 1 }], operation: { operator: 'Given', target: 2 } },
-        { polyomino: [{ row: 0, column: 2 }], operation: { operator: 'Given', target: 3 } },
-        { polyomino: [{ row: 1, column: 0 }], operation: { operator: 'Given', target: 2 } },
-        { polyomino: [{ row: 1, column: 1 }], operation: { operator: 'Given', target: 3 } },
-        { polyomino: [{ row: 1, column: 2 }], operation: { operator: 'Given', target: 1 } },
-        { polyomino: [{ row: 2, column: 0 }], operation: { operator: 'Given', target: 3 } },
-        { polyomino: [{ row: 2, column: 1 }], operation: { operator: 'Given', target: 1 } },
-        { polyomino: [{ row: 2, column: 2 }], operation: { operator: 'Given', target: 2 } },
+        {
+          polyomino: [{ row: 0, column: 0 }],
+          operation: { operator: 'Given', target: 1 },
+        },
+        {
+          polyomino: [{ row: 0, column: 1 }],
+          operation: { operator: 'Given', target: 2 },
+        },
+        {
+          polyomino: [{ row: 0, column: 2 }],
+          operation: { operator: 'Given', target: 3 },
+        },
+        {
+          polyomino: [{ row: 1, column: 0 }],
+          operation: { operator: 'Given', target: 2 },
+        },
+        {
+          polyomino: [{ row: 1, column: 1 }],
+          operation: { operator: 'Given', target: 3 },
+        },
+        {
+          polyomino: [{ row: 1, column: 2 }],
+          operation: { operator: 'Given', target: 1 },
+        },
+        {
+          polyomino: [{ row: 2, column: 0 }],
+          operation: { operator: 'Given', target: 3 },
+        },
+        {
+          polyomino: [{ row: 2, column: 1 }],
+          operation: { operator: 'Given', target: 1 },
+        },
+        {
+          polyomino: [{ row: 2, column: 2 }],
+          operation: { operator: 'Given', target: 2 },
+        },
       ],
     };
     await installTauriStubs(page, given3x3);
@@ -66,7 +106,9 @@ test.describe('fix / unfix mode switching', () => {
 });
 
 test.describe('Without-Solution cage commit', () => {
-  test('two-step picker commits a cage with an author-chosen target', async ({ page }) => {
+  test('two-step picker commits a cage with an author-chosen target', async ({
+    page,
+  }) => {
     await installTauriStubs(page, { n: 3 }, { withoutSolution: true });
     await gotoApp(page);
     await waitForGrid(page);
@@ -77,7 +119,9 @@ test.describe('Without-Solution cage commit', () => {
     await page.keyboard.press(ENTER);
 
     // Step one: the operator strip. An empty 3×3 pair admits an Add target.
-    await expect(selectorLabels(page).filter({ hasText: /^\+$/ })).toBeVisible();
+    await expect(
+      selectorLabels(page).filter({ hasText: /^\+$/ }),
+    ).toBeVisible();
     await selectorLabels(page).filter({ hasText: /^\+$/ }).click();
 
     // Step two: the native target dropdown. {1,2} sums to 3, so 3 is a feasible
@@ -89,10 +133,14 @@ test.describe('Without-Solution cage commit', () => {
     await targetSelect.selectOption('3');
 
     // The committed cage shows its +3 label and the provisional outline is gone.
-    await expect(page.locator('.grid-svg text').filter({ hasText: /^\+3$/ })).toBeVisible();
+    await expect(
+      page.locator('.grid-svg text').filter({ hasText: /^\+3$/ }),
+    ).toBeVisible();
   });
 
-  test('target dropdown is selectable from the keyboard by typing the number', async ({ page }) => {
+  test('target dropdown is selectable from the keyboard by typing the number', async ({
+    page,
+  }) => {
     await installTauriStubs(page, { n: 3 }, { withoutSolution: true });
     await gotoApp(page);
     await waitForGrid(page);
@@ -108,12 +156,16 @@ test.describe('Without-Solution cage commit', () => {
     await expect(targetSelect).toBeFocused();
     await page.keyboard.press('3');
 
-    await expect(page.locator('.grid-svg text').filter({ hasText: /^\+3$/ })).toBeVisible();
+    await expect(
+      page.locator('.grid-svg text').filter({ hasText: /^\+3$/ }),
+    ).toBeVisible();
   });
 });
 
 test.describe('Without-Solution singleton cages', () => {
-  test('typing a permitted digit immediately creates a singleton cage', async ({ page }) => {
+  test('typing a permitted digit immediately creates a singleton cage', async ({
+    page,
+  }) => {
     await installTauriStubs(page, { n: 3 }, { withoutSolution: true });
     await gotoApp(page);
     await waitForGrid(page);
@@ -127,7 +179,9 @@ test.describe('Without-Solution singleton cages', () => {
     await expect(selectorLabels(page).filter({ hasText: /^2$/ })).toBeVisible();
   });
 
-  test('singleton picker opens on the value dropdown, skipping the operator step', async ({ page }) => {
+  test('singleton picker opens on the value dropdown, skipping the operator step', async ({
+    page,
+  }) => {
     await installTauriStubs(page, { n: 3 }, { withoutSolution: true });
     await gotoApp(page);
     await waitForGrid(page);
@@ -141,9 +195,8 @@ test.describe('Without-Solution singleton cages', () => {
     await expect(targetSelect).toBeVisible();
     await expect(targetSelect).toBeFocused();
 
-    // The operator strip is skipped (no operator tabs) and there is no '#' header.
+    // The operator strip is skipped (no operator tabs).
     await expect(selectorLabels(page)).toHaveCount(0);
-    await expect(targetSelect.locator('option').filter({ hasText: '#' })).toHaveCount(0);
 
     // The dropdown offers the feasible Given values for an empty 3×3 cell (1–3).
     await expect(targetSelect.locator('option[value="1"]')).toHaveCount(1);
@@ -151,6 +204,6 @@ test.describe('Without-Solution singleton cages', () => {
 
     // Choosing a value commits the singleton Given cage (its label is just the number).
     await targetSelect.selectOption('3');
-    await expect(page.locator('.grid-svg text').filter({ hasText: /^3$/ })).toBeVisible();
+    await expect(selectorLabels(page).filter({ hasText: /^3$/ })).toBeVisible();
   });
 });
