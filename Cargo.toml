@@ -2,8 +2,29 @@
 resolver = "3"
 members = [
     "mathdoku",
+    "apps/designer",
+    "apps/designer/core",
+    "apps/designer/src-tauri",
 ]
 
 [workspace.package]
-version = "0.1.0"
 edition = "2024"
+authors = ["W.P. McNeill"]
+repository = "https://github.com/wpm/Mathdoku"
+license = "MIT"
+
+[workspace.lints.rust]
+unused_results = "warn"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"

@@ -30,12 +30,12 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: cargo fmt (mathdoku-designer)
-        run: cd mathdoku-designer && cargo fmt --all -- --check
+        run: cd apps/designer && cargo fmt --all -- --check
 
       # ── clippy ───────────────────────────────────────────────────────────
       - name: cargo clippy (mathdoku)
         run: |
-          cargo clippy --all-targets -- \
+          cargo clippy -p mathdoku --all-targets -- \
             -D warnings \
             -D clippy::all \
             -D clippy::pedantic \
@@ -51,11 +51,11 @@ jobs:
             -A clippy::must_use_candidate
 
       - name: cargo clippy (mathdoku-designer)
-        run: cd mathdoku-designer && cargo clippy --all-targets
+        run: cd apps/designer && cargo clippy --all-targets
 
       # ── doc ──────────────────────────────────────────────────────────────
       - name: cargo doc
-        run: cargo doc --no-deps
+        run: cargo doc --no-deps -p mathdoku
 
   # ── Tests (runs on every push, independently of the checks above) ──────────
   test:
@@ -72,10 +72,10 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: cargo test (mathdoku)
-        run: cargo test --lib
+        run: cargo test --lib -p mathdoku
 
       - name: cargo test (mathdoku-designer)
-        run: cd mathdoku-designer && cargo test
+        run: cd apps/designer && cargo test
 
   # ── Code coverage ──────────────────────────────────────────────────────────
   coverage:
@@ -97,10 +97,10 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: cargo llvm-cov (mathdoku)
-        run: cargo llvm-cov --lib --workspace --lcov --output-path lcov-mathdoku.info
+        run: cargo llvm-cov --lib -p mathdoku --lcov --output-path lcov-mathdoku.info
 
       - name: cargo llvm-cov (mathdoku-designer)
-        run: cd mathdoku-designer && cargo llvm-cov --lcov --output-path ../lcov-designer.info
+        run: cd apps/designer && cargo llvm-cov --lcov --output-path ../../lcov-designer.info
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
@@ -117,7 +117,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: mathdoku-designer/e2e
+        working-directory: apps/designer/e2e
 
     steps:
       - uses: actions/checkout@v4
@@ -141,7 +141,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: mathdoku-designer/e2e/package-lock.json
+          cache-dependency-path: apps/designer/e2e/package-lock.json
 
       - name: Install npm dependencies
         run: npm ci
@@ -159,7 +159,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: playwright-test-results
-          path: mathdoku-designer/e2e/test-results/
+          path: apps/designer/e2e/test-results/
           retention-days: 7
           if-no-files-found: ignore
 
@@ -179,7 +179,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: cargo test --include-ignored (mathdoku)
-        run: cargo test --lib -- --include-ignored
+        run: cargo test --lib -p mathdoku -- --include-ignored
 
   # ── Cross-platform release builds (main only) ──────────────────────────────
   build:
@@ -220,6 +220,6 @@ jobs:
           key: ${{ matrix.target }}
 
       - name: cargo build --release
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release -p mathdoku --target ${{ matrix.target }}
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc

@@ -1,7 +1,11 @@
 [package]
 name = "mathdoku"
-version.workspace = true
+version = "0.1.0"
 edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+rust-version = "1.87"
 
 [dependencies]
 itertools = "0.14"
@@ -13,5 +17,9 @@ strum = { version = "0.28", features = ["derive"] }
 rand_chacha = "0.10.0"
 serde_json = "1"
 
+# Does not yet opt in to `[lints] workspace = true`. The strict workspace policy
+# (clippy::all/pedantic/nursery deny, unwrap_used/expect_used/panic deny, etc.)
+# requires an error-handling cleanup pass tracked in #59. Until then this crate
+# keeps only its local lint.
 [lints.rust]
 unused_results = "warn"

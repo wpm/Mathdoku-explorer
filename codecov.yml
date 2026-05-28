@@ -1,7 +1,7 @@
 # Coverage gating.
 #
 # The frontend WASM IPC glue (the wasm_bindgen externs and async invoke/dialog
-# wrappers in mathdoku-designer/src) calls into `window.__TAURI__` and is
+# wrappers in apps/designer/src) calls into `window.__TAURI__` and is
 # exercised by the Playwright end-to-end suite, not by host `cargo llvm-cov`
 # unit tests. It therefore reports as uncovered even though it is tested.
 #

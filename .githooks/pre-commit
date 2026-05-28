@@ -6,11 +6,11 @@ cd "$REPO_ROOT"
 
 echo "==> cargo fmt"
 cargo fmt --all
-(cd mathdoku-designer && cargo fmt --all)
+(cd apps/designer && cargo fmt --all)
 git add -u
 
 echo "==> cargo clippy (mathdoku)"
-cargo clippy --all-targets -- \
+cargo clippy -p mathdoku --all-targets -- \
   -D warnings \
   -D clippy::all \
   -D clippy::pedantic \
@@ -27,13 +27,13 @@ cargo clippy --all-targets -- \
   2>&1
 
 echo "==> cargo doc"
-RUSTDOCFLAGS="-D warnings" cargo doc --no-deps 2>&1
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p mathdoku 2>&1
 
 echo "==> cargo test"
-cargo test --lib 2>&1
+cargo test --lib -p mathdoku 2>&1
 
 echo "==> mathdoku-designer checks"
-(cd mathdoku-designer && \
+(cd apps/designer && \
   cargo clippy --all-targets 2>&1 && \
   cargo test 2>&1)
 
