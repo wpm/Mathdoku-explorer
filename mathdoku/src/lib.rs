@@ -7,8 +7,8 @@
 //! | [`Cell`] | A grid position identified by `(row, column)`. |
 //! | [`Values`] | A bitmap set of candidate values `1..=9` for a cell. |
 //! | [`Cage`] | A polyomino paired with an [`Operation`]. |
-//! | [`Puzzle`] | An `n×n` cage structure (no cell domains). |
-//! | [`Grid`] | An `n×n` grid of cell domains. |
+//! | [`Puzzle`] | An `n×n` cage structure (no cell values). |
+//! | [`Grid`] | An `n×n` grid of cell values. |
 //! | [`Tuple`] | An ordered assignment of values to the cells of a cage. |
 //! | [`Mdd`] | A reduced ordered MDD over a cage's valid tuples. |
 //!
@@ -17,7 +17,7 @@
 //! - **Generate** a random puzzle with [`generate()`] or [`generate::generate_with`] (custom
 //!   operation policy / cage-size distribution).
 //! - **Construct** a puzzle programmatically with [`Puzzle::new`] and [`Puzzle::insert_cage`].
-//! - **Inspect** cell domains with [`Grid::cell_values`].
+//! - **Inspect** cell values with [`Grid::cell_values`].
 //! - **Solve** with [`Grid::solutions`].
 //! - **Enumerate a cage's valid assignments** with [`Cage::mdd`] then [`Mdd::tuples`].
 //! - **Query valid operators** for a polyomino with [`operators`].

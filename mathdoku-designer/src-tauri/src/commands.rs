@@ -30,9 +30,9 @@ pub const RECENT_FILE: &str = "last_open.json";
 pub struct AppState {
     /// Cage structure being designed.
     pub puzzle: Option<Puzzle>,
-    /// Latin-square solution fixed at puzzle creation. Singleton domains for every cell.
+    /// Latin-square solution fixed at puzzle creation. Singleton values for every cell.
     pub solution: Option<Grid>,
-    /// Working grid: cell domains constrained by the current cages against the solution.
+    /// Working grid: cell values constrained by the current cages against the solution.
     pub current: Option<Grid>,
     /// Path of the currently open `.mathdoku` file, or `None` if unsaved.
     pub path: Option<String>,
@@ -79,7 +79,7 @@ pub struct SaveEnvelope {
 /// Computes the working `current` grid for `puzzle`.
 ///
 /// In With-Solution mode the cages are re-applied to the fixed Latin square so
-/// its singleton domains are preserved. In Without-Solution mode there is no
+/// its singleton values are preserved. In Without-Solution mode there is no
 /// solution to start from, so the cages are propagated from a fresh
 /// unconstrained grid.
 pub(crate) fn constrain_current(
@@ -172,7 +172,7 @@ pub fn new_empty(n: usize, state: TauriState<Mutex<AppState>>) -> Result<State, 
 
 /// Creates a new puzzle whose solution is a random Latin square.
 ///
-/// `solution` holds the fixed Latin-square values (singleton domains).
+/// `solution` holds the fixed Latin-square values (a single value per cell).
 /// `current` starts as the same Latin-square grid, constrained by the (empty) puzzle.
 ///
 /// # Errors
@@ -308,7 +308,7 @@ pub fn set_window_title<R: Runtime>(title: String, app: AppHandle<R>) -> Result<
 ///
 /// In Without-Solution mode the caller supplies `target` directly. In
 /// With-Solution mode `target` is `None` and the value is computed from the
-/// `solution` singleton domains:
+/// `solution` singleton values:
 /// - `Given` and single-cell: the cell's solution value.
 /// - `Add`: sum of all solution values.
 /// - `Multiply`: product of all solution values.

@@ -1,4 +1,4 @@
-//! The cage structure and constrained cell domains for the puzzle being designed,
+//! The cage structure and constrained cell values for the puzzle being designed,
 //! shared via context for on-demand queries.
 
 use std::collections::HashSet;
@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use mathdoku::{Cage, Cell, Grid, Puzzle};
 
-/// The cage structure and constrained cell domains for the puzzle being designed,
+/// The cage structure and constrained cell values for the puzzle being designed,
 /// shared via context for on-demand queries.
 ///
 /// The `Mutex` is needed only to satisfy `Send + Sync` for `provide_context`; on
@@ -179,8 +179,8 @@ mod tests {
     }
 
     #[test]
-    fn cell_value_singleton_none_when_domain_not_singleton() {
-        // A fresh grid has the full domain {1,2,3} in every cell.
+    fn cell_value_singleton_none_when_values_not_singleton() {
+        // A fresh grid has the full values {1,2,3} in every cell.
         let ps = PartialSolution::new(Puzzle::new(3).unwrap(), Grid::new(3).unwrap());
         assert_eq!(ps.cell_value_singleton(Cell::new(0, 0)), None);
     }

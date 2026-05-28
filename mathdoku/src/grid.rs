@@ -1,4 +1,4 @@
-//! The [`Grid`] type: an `n×n` grid of cell domains.
+//! The [`Grid`] type: an `n×n` grid of cell values.
 
 #![allow(clippy::cast_possible_truncation)] // n is validated to 1..=9 in Grid::new
 
@@ -10,8 +10,8 @@ use crate::cage::Cage;
 use crate::puzzle::Puzzle;
 use crate::{Cell, Error, N, Tuple, Values};
 
-// Serde wire format: flat struct with an n×n `values` array of cell domains.
-// `values` is optional on deserialization; absent means full domains for all cells.
+// Serde wire format: flat struct with an n×n `values` array of cell value sets.
+// `values` is optional on deserialization; absent means full value sets for all cells.
 #[derive(Serialize, Deserialize)]
 struct GridWire {
     n: usize,
@@ -19,9 +19,9 @@ struct GridWire {
     values: Vec<Vec<Values>>,
 }
 
-/// An `n×n` grid of cell domains.
+/// An `n×n` grid of cell values.
 ///
-/// Each cell has a [`Values`] domain — the set of candidate values `1..=n` still
+/// Each cell has a [`Values`] set — the candidate values `1..=n` still
 /// consistent with the constraints applied so far. Use [`Grid::constrain`] to
 /// propagate a [`Puzzle`]'s cage constraints into the grid.
 ///
@@ -35,7 +35,7 @@ pub struct Grid {
 }
 
 impl Grid {
-    /// Creates an `n×n` grid with all cell domains initialized to `{1, ..., n}`.
+    /// Creates an `n×n` grid with all cell values initialized to `{1, ..., n}`.
     ///
     /// # Errors
     /// Returns [`InvalidGridSize`] if `n` is not in `1..=9`.
@@ -56,7 +56,7 @@ impl Grid {
         self.n
     }
 
-    /// Returns the current domain of `cell`.
+    /// Returns the current values of `cell`.
     ///
     /// # Errors
     /// Returns [`Error::InvalidCell`] if `cell` is outside the grid.
@@ -64,19 +64,19 @@ impl Grid {
         Ok(self.values[self.index(cell)?])
     }
 
-    /// Returns a new grid with `cell`'s domain narrowed to the singleton `{n}`.
+    /// Returns a new grid with `cell`'s values narrowed to the singleton `{n}`.
     ///
     /// # Errors
     /// Returns [`Error::InvalidCell`] if `cell` is outside the grid.
     pub(crate) fn set_cell_value(&self, cell: Cell, n: N) -> Result<Self, Error> {
-        self.set_domain(cell, Values::singleton(n))
+        self.set_values(cell, Values::singleton(n))
     }
 
-    /// Returns a new grid with `cell`'s domain replaced by `values`.
+    /// Returns a new grid with `cell`'s values replaced by `values`.
     ///
     /// # Errors
     /// Returns [`Error::InvalidCell`] if `cell` is outside the grid.
-    pub(crate) fn set_domain(&self, cell: Cell, values: Values) -> Result<Self, Error> {
+    pub(crate) fn set_values(&self, cell: Cell, values: Values) -> Result<Self, Error> {
         let i = self.index(cell)?;
         let mut new_values = self.values;
         new_values[i] = values;
@@ -86,7 +86,7 @@ impl Grid {
         })
     }
 
-    /// Creates a `Grid` whose cell domains are the singleton values from `square`.
+    /// Creates a `Grid` whose cell values are the singleton values from `square`.
     ///
     /// `square` must be an `n×n` slice of rows, each row containing values in `1..=n`.
     ///
@@ -98,20 +98,20 @@ impl Grid {
         for (r, row) in square.iter().enumerate() {
             for (c, &v) in row.iter().enumerate() {
                 let cell = Cell::new(r, c);
-                grid = grid.set_domain(cell, Self::singleton_domain(v))?;
+                grid = grid.set_values(cell, Self::singleton_values(v))?;
             }
         }
         Ok(grid)
     }
 
-    fn singleton_domain(v: N) -> Values {
+    fn singleton_values(v: N) -> Values {
         Values::singleton(v)
     }
 
     /// Propagates all constraints from `puzzle` to a fixpoint.
     ///
     /// Runs Régin's GAC on every row and column (all-different) and every cage,
-    /// re-propagating any constraint adjacent to a cell whose domain shrinks, until
+    /// re-propagating any constraint adjacent to a cell whose values shrink, until
     /// no further pruning is possible.
     ///
     /// # Errors
@@ -124,11 +124,11 @@ impl Grid {
         crate::grid_csp::grid_fixpoint(self, puzzle)
     }
 
-    /// Returns a new grid with the domains of `cells` reset to `{1..=n}` and
+    /// Returns a new grid with the values of `cells` reset to `{1..=n}` and
     /// all constraints re-propagated.
     ///
     /// This is the inverse of narrowing: use it when a constraint that was
-    /// previously narrowing those cells is removed and their domains may have
+    /// previously narrowing those cells is removed and their values may have
     /// widened beyond what the remaining constraints require.
     ///
     /// # Errors
@@ -148,7 +148,7 @@ impl Grid {
 
     /// Returns an iterator over all solutions for this grid under `puzzle`'s constraints.
     ///
-    /// Each item is a solved [`Grid`] where every cell domain is a singleton.
+    /// Each item is a solved [`Grid`] where every cell's values are a singleton.
     /// Uses MAC (Maintaining Arc Consistency): each branch is followed immediately by
     /// constraint propagation before the next branch is chosen.
     ///
@@ -164,17 +164,17 @@ impl Grid {
         crate::grid_csp::Solutions::new(self, puzzle)
     }
 
-    /// Returns `true` if every cell domain is a singleton.
+    /// Returns `true` if every cell's values are a singleton.
     pub fn is_solution(&self) -> bool {
         (0..self.n)
             .flat_map(|r| (0..self.n).map(move |c| Cell::new(r, c)))
             .all(|cell| self.cell_values(cell).is_ok_and(Values::is_singleton))
     }
 
-    /// Returns all valid ordered value assignments for `cage` given the current cell domains.
+    /// Returns all valid ordered value assignments for `cage` given the current cell values.
     ///
     /// Each tuple assigns one value from `1..=n` to each cell in the cage, in
-    /// the cage's cell order, filtered by the current domains of each cell.
+    /// the cage's cell order, filtered by the current values of each cell.
     /// Tuples are in lexicographic order.
     ///
     /// # Errors
@@ -331,7 +331,7 @@ mod tests {
     }
 
     #[test]
-    fn new_domains_are_full() {
+    fn new_values_are_full() {
         let g = Grid::new(4).unwrap();
         let expected = Values::all(4);
         for r in 0..4 {
@@ -339,7 +339,7 @@ mod tests {
                 assert_eq!(
                     g.cell_values(Cell::new(r, c)).unwrap(),
                     expected,
-                    "cell ({r},{c}) should have full domain"
+                    "cell ({r},{c}) should have full values"
                 );
             }
         }
@@ -363,7 +363,7 @@ mod tests {
     // --- Grid::set_cell_value ---
 
     #[test]
-    fn set_cell_values_narrows_domain() {
+    fn set_cell_values_narrows_values() {
         let g = Grid::new(4).unwrap();
         let cell = Cell::new(1, 2);
         let g2 = g.set_cell_value(cell, 3).unwrap();
@@ -723,7 +723,7 @@ mod tests {
     }
 
     #[test]
-    fn grid_deserialize_absent_values_uses_full_domains() {
+    fn grid_deserialize_absent_values_uses_full_value_sets() {
         let json = r#"{"n":3}"#;
         let g: Grid = from_str(json).unwrap();
         assert_eq!(g.n(), 3);

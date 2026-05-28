@@ -86,9 +86,9 @@ fn with_solution_view(
     let polyomino = pending.polyomino.clone();
     let selected_idx = pending.selected_idx;
 
-    // Build (operator, label) pairs. When all cell domains are singletons,
+    // Build (operator, label) pairs. When all cells' values are singletons,
     // omit any operator for which compute_target returns None (e.g. Divide
-    // on non-divisible values). When domains are undetermined, show all
+    // on non-divisible values). When values are undetermined, show all
     // allowed operators with a label of just the operator symbol.
     let all_determined = polyomino
         .cells()
@@ -367,7 +367,7 @@ pub struct PendingCommit {
 }
 
 /// Computes the target value for `op` applied to `polyomino`'s cells using the solution
-/// values read from `partial_solution`. Returns `None` if any cell's domain is not a singleton.
+/// values read from `partial_solution`. Returns `None` if any cell's values are not a singleton.
 fn compute_target(
     polyomino: &Polyomino,
     op: &Operator,
@@ -679,8 +679,8 @@ mod tests {
     }
 
     #[test]
-    fn compute_target_none_when_domain_not_singleton() {
-        // Unconstrained grid: every cell domain is {1,2,3}, not a singleton.
+    fn compute_target_none_when_values_not_singleton() {
+        // Unconstrained grid: every cell's values are {1,2,3}, not a singleton.
         let ps = PartialSolution::new(Puzzle::new(3).unwrap(), Grid::new(3).unwrap());
         assert_eq!(
             compute_target(&poly(&[(0, 0)]), &Operator::Given, &ps),

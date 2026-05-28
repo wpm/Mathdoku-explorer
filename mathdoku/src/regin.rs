@@ -1,16 +1,16 @@
 //! Régin's generalized arc-consistency (GAC) algorithm for all-different.
 //!
-//! The entry point is [`regin_gac`], which prunes the domains of a set of
+//! The entry point is [`regin_gac`], which prunes the values of a set of
 //! variables so that every surviving value participates in at least one
 //! complete assignment of distinct values. The algorithm runs in
 //! `O(n + e)` time (where `n` is the number of variables and `e` the total
-//! domain size) by reducing GAC to a maximum bipartite matching followed by
-//! a strongly connected-components decomposition of the residual digraph.
+//! number of candidate values) by reducing GAC to a maximum bipartite matching
+//! followed by a strongly connected-components decomposition of the residual digraph.
 //!
 //! Reference: Jean-Charles Régin, "A filtering algorithm for constraints of
 //! difference in CSPs", *AAAI-94*, 1994, pp. 362–367.
 
-#![allow(clippy::similar_names)] // var/val, ip/jp/kp are domain idioms in matching/SCC algorithms
+#![allow(clippy::similar_names)] // var/val, ip/jp/kp are standard idioms in matching/SCC algorithms
 
 use crate::Values;
 use crate::cell::N;
@@ -18,17 +18,17 @@ use std::collections::HashMap;
 
 /// Full Régin GAC for all-different.
 ///
-/// Given one domain per variable, returns the pruned domains in the same order.
+/// Given one value set per variable, returns the pruned value sets in the same order.
 /// A value survives for a variable iff some assignment of distinct values (one
-/// per variable, each within its domain) uses it; if no such complete
-/// assignment exists, every domain empties.
-pub fn regin_gac(domains: &[Values]) -> Vec<Values> {
-    let n = domains.len();
+/// per variable, each within its value set) uses it; if no such complete
+/// assignment exists, every value set empties.
+pub fn regin_gac(values: &[Values]) -> Vec<Values> {
+    let n = values.len();
     if n == 0 {
         return vec![];
     }
 
-    let all_values: Vec<N> = domains
+    let all_values: Vec<N> = values
         .iter()
         .fold(Values::default(), |acc, d| acc | *d)
         .values();
@@ -38,7 +38,7 @@ pub fn regin_gac(domains: &[Values]) -> Vec<Values> {
         .enumerate()
         .map(|(i, &v)| (v, i))
         .collect();
-    let indexed_domains: Vec<Vec<usize>> = domains
+    let indexed_values: Vec<Vec<usize>> = values
         .iter()
         .map(|d| d.values().iter().map(|v| value_index[v]).collect())
         .collect();
@@ -51,7 +51,7 @@ pub fn regin_gac(domains: &[Values]) -> Vec<Values> {
         visited.fill(false);
         let _ = augment(
             var,
-            &indexed_domains,
+            &indexed_values,
             &mut var_match,
             &mut val_match,
             &mut visited,
@@ -59,7 +59,7 @@ pub fn regin_gac(domains: &[Values]) -> Vec<Values> {
     }
 
     // An unmatched variable means no system of distinct representatives exists:
-    // the constraint is unsatisfiable, so every domain empties.
+    // the constraint is unsatisfiable, so every value set empties.
     if var_match.iter().any(Option::is_none) {
         return vec![Values::default(); n];
     }
@@ -70,7 +70,7 @@ pub fn regin_gac(domains: &[Values]) -> Vec<Values> {
     let total = n + num_values;
     let mut adj: Vec<Vec<usize>> = vec![vec![]; total];
     for var in 0..n {
-        for &vi in &indexed_domains[var] {
+        for &vi in &indexed_values[var] {
             let val_node = n + vi;
             if var_match[var] == Some(vi) {
                 adj[var].push(val_node);
@@ -107,7 +107,7 @@ pub fn regin_gac(domains: &[Values]) -> Vec<Values> {
     let mut result = vec![Values::default(); n];
     for var in 0..n {
         let matched = var_match[var];
-        let vals: Vec<N> = indexed_domains[var]
+        let vals: Vec<N> = indexed_values[var]
             .iter()
             .filter(|&&vi| matched == Some(vi) || scc[var] == scc[n + vi] || reachable[n + vi])
             .map(|&vi| all_values[vi])
@@ -121,18 +121,18 @@ pub fn regin_gac(domains: &[Values]) -> Vec<Values> {
 
 fn augment(
     var: usize,
-    indexed_domains: &[Vec<usize>],
+    indexed_values: &[Vec<usize>],
     var_match: &mut [Option<usize>],
     val_match: &mut [Option<usize>],
     visited: &mut [bool],
 ) -> bool {
-    for &vi in &indexed_domains[var] {
+    for &vi in &indexed_values[var] {
         if visited[vi] {
             continue;
         }
         visited[vi] = true;
         if val_match[vi]
-            .is_none_or(|other| augment(other, indexed_domains, var_match, val_match, visited))
+            .is_none_or(|other| augment(other, indexed_values, var_match, val_match, visited))
         {
             var_match[var] = Some(vi);
             val_match[vi] = Some(var);
@@ -214,32 +214,32 @@ mod tests {
     // --- Régin vs the brute-force oracle ---
 
     /// Exhaustive GAC oracle: a value is kept for a variable iff some complete
-    /// assignment of distinct in-domain values uses it.
-    fn brute_force_gac(domains: &[Values]) -> Vec<Values> {
+    /// assignment of distinct allowed values uses it.
+    fn brute_force_gac(values: &[Values]) -> Vec<Values> {
         fn extend(
             i: usize,
-            domains: &[Values],
+            values: &[Values],
             used: u16,
             current: &mut [N],
             support: &mut [Values],
         ) {
-            if i == domains.len() {
+            if i == values.len() {
                 for (slot, &value) in support.iter_mut().zip(current.iter()) {
                     *slot = *slot | Values::new(&[value]).unwrap();
                 }
                 return;
             }
-            for value in domains[i].values() {
+            for value in values[i].values() {
                 let bit = 1u16 << value;
                 if used & bit == 0 {
                     current[i] = value;
-                    extend(i + 1, domains, used | bit, current, support);
+                    extend(i + 1, values, used | bit, current, support);
                 }
             }
         }
-        let mut support = vec![Values::default(); domains.len()];
-        let mut current = vec![0u8; domains.len()];
-        extend(0, domains, 0u16, &mut current, &mut support);
+        let mut support = vec![Values::default(); values.len()];
+        let mut current = vec![0u8; values.len()];
+        extend(0, values, 0u16, &mut current, &mut support);
         support
     }
 
@@ -254,29 +254,26 @@ mod tests {
 
     #[test]
     fn regin_prunes_forced_chain() {
-        let domains = vec![
+        let values = vec![
             Values::new(&[1, 2]).unwrap(),
             Values::new(&[2]).unwrap(),
             Values::new(&[1, 3]).unwrap(),
         ];
-        assert_eq!(
-            sorted(&regin_gac(&domains)),
-            vec![vec![1], vec![2], vec![3]]
-        );
+        assert_eq!(sorted(&regin_gac(&values)), vec![vec![1], vec![2], vec![3]]);
     }
 
     #[test]
     fn regin_infeasible_empties_all() {
-        let domains = vec![Values::new(&[1]).unwrap(), Values::new(&[1]).unwrap()];
+        let values = vec![Values::new(&[1]).unwrap(), Values::new(&[1]).unwrap()];
         assert_eq!(
-            regin_gac(&domains),
+            regin_gac(&values),
             vec![Values::default(), Values::default()]
         );
     }
 
     #[test]
     fn regin_keeps_free_value() {
-        // One variable, two domain values: full Régin keeps both.
+        // One variable, two candidate values: full Régin keeps both.
         assert_eq!(
             sorted(&regin_gac(&[Values::new(&[1, 2]).unwrap()])),
             vec![vec![1, 2]]
@@ -295,7 +292,7 @@ mod tests {
         );
     }
 
-    fn random_domains(rng: &mut ChaCha8Rng, max_vars: usize, max_values: u8) -> Vec<Values> {
+    fn random_values(rng: &mut ChaCha8Rng, max_vars: usize, max_values: u8) -> Vec<Values> {
         let n_vars = rng.random_range(1..=max_vars);
         let n_values = rng.random_range(1..=max_values);
         (0..n_vars)
@@ -323,15 +320,15 @@ mod tests {
         let mut rng = ChaCha8Rng::seed_from_u64(0x5151_2026);
         let mut saw_free_value_case = false;
         for _ in 0..5000 {
-            let domains = random_domains(&mut rng, 8, 8);
-            let values: Values = domains.iter().fold(Values::default(), |acc, d| acc | *d);
-            if values.len() > domains.len() {
+            let values = random_values(&mut rng, 8, 8);
+            let union: Values = values.iter().fold(Values::default(), |acc, d| acc | *d);
+            if union.len() > values.len() {
                 saw_free_value_case = true;
             }
             assert_eq!(
-                regin_gac(&domains),
-                brute_force_gac(&domains),
-                "Régin and brute force disagree on {domains:?}"
+                regin_gac(&values),
+                brute_force_gac(&values),
+                "Régin and brute force disagree on {values:?}"
             );
         }
         assert!(saw_free_value_case);

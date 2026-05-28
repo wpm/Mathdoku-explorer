@@ -1,4 +1,4 @@
-//! The [`Puzzle`] type: an `n×n` grid with cage constraints (no cell domains).
+//! The [`Puzzle`] type: an `n×n` grid with cage constraints (no cell values).
 
 // `Cage` caches its MDD behind a `OnceLock`, giving it interior mutability, but
 // its `Ord`/`Eq`/`Hash` impls depend only on the polyomino and operation — never
@@ -24,7 +24,7 @@ struct PuzzleWire {
 /// An `n×n` Mathdoku puzzle defined by its cage constraints.
 ///
 /// A `Puzzle` stores only the structural information — the grid size and the set
-/// of cages — without any cell domain information. Cell domains live in [`Grid`].
+/// of cages — without any cell value information. Cell values live in [`Grid`].
 ///
 /// [`Grid`]: crate::Grid
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]

@@ -59,17 +59,17 @@ pub fn Puzzle(
     let (colors, cage_index) = assign_colors(n, &cage_cells);
 
     // Propagate cage constraints from an unconstrained grid so each cell's
-    // domain shows all values still possible given the cages, not just the solution.
+    // values show all candidates still possible given the cages, not just the solution.
     let propagated = Grid::new(n)
         .and_then(|g| g.constrain(&state.puzzle))
         .unwrap_or_else(|_| state.current.clone());
-    let mut domains = vec![vec![vec![]; n]; n];
+    let mut cell_values = vec![vec![vec![]; n]; n];
     let mut solution_values = vec![vec![None::<u8>; n]; n];
-    for (r, row) in domains.iter_mut().enumerate() {
-        for (c, cell_domain) in row.iter_mut().enumerate() {
+    for (r, row) in cell_values.iter_mut().enumerate() {
+        for (c, slot) in row.iter_mut().enumerate() {
             let cell_ref = Cell::new(r, c);
             if let Ok(vals) = propagated.cell_values(cell_ref) {
-                *cell_domain = vals.values();
+                *slot = vals.values();
             }
             // Without-Solution mode has no solution values to overlay.
             if let Some(solution) = &state.solution
@@ -496,9 +496,9 @@ pub fn Puzzle(
         .map(|(r, c)| {
             let (x, y) = origin(cell, r, c);
             let fill = cage_index[r][c].map_or(BG, |i| CAGE_PALETTE[colors[i] % CAGE_PALETTE.len()]);
-            let domain = domains[r][c].clone();
+            let values = cell_values[r][c].clone();
             let solution_value = solution_values[r][c];
-            view! { <CellComponent x=x y=y cell=cell domain=domain fill=fill top_margin=top_margin n=n solution_value=solution_value /> }
+            view! { <CellComponent x=x y=y cell=cell values=values fill=fill top_margin=top_margin n=n solution_value=solution_value /> }
         })
         .collect();
 
@@ -627,7 +627,7 @@ pub fn Puzzle(
 pub struct InteractionState {
     /// Single source of truth: active cell and provisional cages.
     pub designer_state: RwSignal<State>,
-    /// Cage structure and constrained domains for on-demand queries.
+    /// Cage structure and constrained values for on-demand queries.
     pub partial_solution: PartialSolution,
     /// Cell size in SVG units.
     pub cell_size: f64,

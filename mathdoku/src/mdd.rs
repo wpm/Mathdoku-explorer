@@ -29,7 +29,7 @@
 //! - Srinivasan, A., Ham, T., Malik, S., & Brayton, R. K. (1990). Algorithms for
 //!   discrete function manipulation. *Proceedings of ICCAD 1990*, 92–95. The original
 //!   Multi-valued Decision Diagram paper, extending Bryant's BDD framework from binary
-//!   to multi-valued variable domains.
+//!   to multi-valued variables.
 //! - Knuth, D. E. (2011). *The Art of Computer Programming, Volume 4A*, §7.1.4.
 //!   Comprehensive textbook treatment of BDDs. Knuth carefully uses "equivalent" for
 //!   the node-merging relation and reserves "isomorphic" for graph isomorphism —
@@ -150,19 +150,23 @@ impl Mdd {
         }
     }
 
-    /// Computes the per-cell support of the cage under the current cell `domains`.
+    /// Computes the per-cell support of the cage under the current cell `values`.
     ///
-    /// `domains` holds one [`Values`] domain per cell, in [`Polyomino::cells`] order;
+    /// `values` holds one [`Values`] set per cell, in [`Polyomino::cells`] order;
     /// the returned vector has the same length. Position `i` is the set of values that
     /// appear at cell `i` in at least one root-to-terminal path every label of which
-    /// lies in its cell's domain. When no such path exists — including when any domain
-    /// is empty — every returned set is empty, so infeasibility propagates.
+    /// lies in its cell's value set. When no such path exists — including when any value
+    /// set is empty — every returned set is empty, so infeasibility propagates.
     ///
     /// Runs in `O(|edges|)` via a top-down reachability sweep followed by a bottom-up
     /// co-reachability sweep (a variant of Perez & Régin's MDD-4R), rather than the
     /// `O(|paths|)` cost of filtering [`Mdd::tuples`].
-    pub fn support(&self, domains: &[Values]) -> Vec<Values> {
-        debug_assert_eq!(domains.len(), self.k, "support expects one domain per cell");
+    pub fn support(&self, values: &[Values]) -> Vec<Values> {
+        debug_assert_eq!(
+            values.len(),
+            self.k,
+            "support expects one value set per cell"
+        );
         let Some(root) = self.root else {
             return vec![Values::default(); self.k];
         };
@@ -174,7 +178,7 @@ impl Mdd {
             levels[node.level].push(id);
         }
 
-        // Top-down: the root is reachable, and a node is reachable when some in-domain
+        // Top-down: the root is reachable, and a node is reachable when some allowed
         // edge from a reachable node lands on it.
         let mut reachable = vec![false; self.nodes.len()];
         reachable[root] = true;
@@ -182,7 +186,7 @@ impl Mdd {
             for &u in &levels[i] {
                 if reachable[u] {
                     for &(label, child) in &self.nodes[u].edges {
-                        if domains[i].contains(label) {
+                        if values[i].contains(label) {
                             reachable[child] = true;
                         }
                     }
@@ -191,7 +195,7 @@ impl Mdd {
         }
 
         // Bottom-up: the terminal is co-reachable, and a node is co-reachable when some
-        // in-domain edge from it lands on a co-reachable node.
+        // allowed edge from it lands on a co-reachable node.
         let mut coreachable = vec![false; self.nodes.len()];
         for &t in &levels[self.k] {
             coreachable[t] = true;
@@ -201,18 +205,18 @@ impl Mdd {
                 coreachable[u] = self.nodes[u]
                     .edges
                     .iter()
-                    .any(|&(label, child)| domains[i].contains(label) && coreachable[child]);
+                    .any(|&(label, child)| values[i].contains(label) && coreachable[child]);
             }
         }
 
         // Support: union the label of every edge bridging a reachable node to a
-        // co-reachable node within its cell's domain.
+        // co-reachable node within its cell's value set.
         let mut support = vec![Values::default(); self.k];
         for i in 0..self.k {
             for &u in &levels[i] {
                 if reachable[u] {
                     for &(label, child) in &self.nodes[u].edges {
-                        if domains[i].contains(label) && coreachable[child] {
+                        if values[i].contains(label) && coreachable[child] {
                             support[i] = support[i] | Values::singleton(label);
                         }
                     }
@@ -593,11 +597,11 @@ mod tests {
     // --- support ---
 
     /// Reference per-cell support: the per-position union of values over every valid
-    /// tuple consistent with `domains`. Runs in `O(|paths|)`, the cost the MDD avoids.
-    fn brute_force_support(mdd: &Mdd, domains: &[Values]) -> Vec<Values> {
-        let mut support = vec![Values::default(); domains.len()];
+    /// tuple consistent with `values`. Runs in `O(|paths|)`, the cost the MDD avoids.
+    fn brute_force_support(mdd: &Mdd, values: &[Values]) -> Vec<Values> {
+        let mut support = vec![Values::default(); values.len()];
         for tuple in mdd.tuples() {
-            if tuple.iter().zip(domains).all(|(&v, d)| d.contains(v)) {
+            if tuple.iter().zip(values).all(|(&v, d)| d.contains(v)) {
                 for (i, &v) in tuple.iter().enumerate() {
                     support[i] = support[i] | Values::singleton(v);
                 }
@@ -606,9 +610,9 @@ mod tests {
         support
     }
 
-    /// `k` random domains over `1..=n`, each value independently included with
-    /// probability one half — so some domains may come out empty.
-    fn random_support_domains(rng: &mut ChaCha8Rng, n: N, k: usize) -> Vec<Values> {
+    /// `k` random value sets over `1..=n`, each value independently included with
+    /// probability one half — so some value sets may come out empty.
+    fn random_support_values(rng: &mut ChaCha8Rng, n: N, k: usize) -> Vec<Values> {
         (0..k)
             .map(|_| {
                 (1..=n).fold(Values::default(), |acc, v| {
@@ -635,12 +639,12 @@ mod tests {
                         let target = ts[rng.random_range(0..ts.len())];
                         let mdd = Mdd::build(n, shape, Operation::new(operator.clone(), target));
                         for _ in 0..8 {
-                            let domains = random_support_domains(&mut rng, n, k);
+                            let values = random_support_values(&mut rng, n, k);
                             assert_eq!(
-                                mdd.support(&domains),
-                                brute_force_support(&mdd, &domains),
+                                mdd.support(&values),
+                                brute_force_support(&mdd, &values),
                                 "support mismatch for n={n}, op={operator}, target={target}, \
-                                 domains={domains:?}, cells={:?}",
+                                 values={values:?}, cells={:?}",
                                 shape.cells()
                             );
                         }
@@ -651,33 +655,33 @@ mod tests {
     }
 
     #[test]
-    fn support_with_empty_domain_is_all_empty() {
-        // A feasible 2×2 Add cage, but one cell's domain is knocked out entirely.
+    fn support_with_empty_value_set_is_all_empty() {
+        // A feasible 2×2 Add cage, but one cell's value set is knocked out entirely.
         let mdd = Mdd::build(4, &square(), Operation::new(Operator::Add, 10));
         assert!(mdd.is_feasible());
-        let domains = vec![
+        let values = vec![
             Values::all(4),
             Values::default(),
             Values::all(4),
             Values::all(4),
         ];
-        let support = mdd.support(&domains);
+        let support = mdd.support(&values);
         assert_eq!(support.len(), 4);
         assert!(support.iter().all(|s| s.is_empty()));
     }
 
     #[test]
-    fn support_full_domains_is_natural_support() {
-        // With every domain `1..=n` no edge is filtered, so support is exactly the
+    fn support_full_value_sets_is_natural_support() {
+        // With every value set `1..=n` no edge is filtered, so support is exactly the
         // natural per-cell support: each level's labels on a root-to-terminal path,
         // equivalently the per-position union over all valid tuples.
         let n = 6;
         let shape = l_shape();
         let k = shape.len();
         let mdd = Mdd::build(n, &shape, Operation::new(Operator::Multiply, 24));
-        let domains = vec![Values::all(n as usize); k];
-        let natural = brute_force_support(&mdd, &domains);
-        assert_eq!(mdd.support(&domains), natural);
+        let values = vec![Values::all(n as usize); k];
+        let natural = brute_force_support(&mdd, &values);
+        assert_eq!(mdd.support(&values), natural);
         // Sanity: the cage is non-trivial — at least one cell supports several values.
         assert!(natural.iter().any(|s| s.len() > 1));
     }

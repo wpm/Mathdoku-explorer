@@ -37,7 +37,7 @@ pub struct State {
     /// in Without-Solution mode.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub solution: Option<Grid>,
-    /// Working grid: cell domains constrained by the current cages.
+    /// Working grid: cell values constrained by the current cages.
     pub current: Grid,
     /// The currently active cell.
     pub active: Cell,
