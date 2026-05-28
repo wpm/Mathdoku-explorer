@@ -37,14 +37,11 @@ pub const fn origin(cell: f64, row: usize, col: usize) -> (f64, f64) {
     )
 }
 
-/// Returns the anchor cell of a cage: the topmost cell in the leftmost column.
+/// Returns the anchor cell of a cage: the first cell in row-major order
+/// (topmost row, leftmost column within that row).
 #[must_use]
 pub fn anchor(cells: &[Cell]) -> Cell {
-    cells
-        .iter()
-        .copied()
-        .min_by_key(|c| (c.column, c.row))
-        .unwrap_or(Cell::new(0, 0))
+    cells.iter().copied().min().unwrap_or(Cell::new(0, 0))
 }
 
 fn neighbors(cell: Cell, n: usize) -> impl Iterator<Item = Cell> {
@@ -236,13 +233,13 @@ mod tests {
     }
 
     #[test]
-    fn anchor_picks_leftmost_then_topmost() {
-        assert_eq!(anchor(&[Cell::new(1, 0), Cell::new(0, 1)]), Cell::new(1, 0));
+    fn anchor_picks_topmost_then_leftmost() {
+        assert_eq!(anchor(&[Cell::new(1, 0), Cell::new(0, 1)]), Cell::new(0, 1));
     }
 
     #[test]
-    fn anchor_tiebreaks_by_row() {
-        assert_eq!(anchor(&[Cell::new(2, 1), Cell::new(0, 1)]), Cell::new(0, 1));
+    fn anchor_tiebreaks_by_column() {
+        assert_eq!(anchor(&[Cell::new(0, 2), Cell::new(0, 1)]), Cell::new(0, 1));
     }
 
     #[test]
