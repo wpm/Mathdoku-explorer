@@ -146,6 +146,8 @@ Cargo's feature unification means the workspace cannot have anything that pulls 
 
 The web build's "no save, no load" stance is a UX statement that has to be visible. The Try page banner copy ("ephemeral demo — install the app to keep what you make") needs to land before the page goes public, or first-time visitors will lose work and feel cheated.
 
+Phase 7's website framework choice inherits a hard constraint from this decision. The website, the Designer canonical build at `/main/`, and the per-PR previews at `/pr-NNN/` all coexist on the same `gh-pages` branch — the website writes to root, the Designer deploys write to their own subtrees, and each uses `keep_files: true` so the three deploys do not wipe each other. This rules out any framework whose deploy step assumes ownership of the whole branch, and rules out GitHub's official `actions/deploy-pages` (which does atomic single-artifact uploads). Static site generators (mdBook, Astro, Zola, plain HTML) are compatible as long as their deploy step uses `peaceiris/actions-gh-pages` with `keep_files: true`.
+
 ### What we'll need to revisit
 
 Persistence on web is deliberately deferred. If telemetry or feedback shows that visitors are losing valuable work, the door is open: the core crate already owns the envelope-serialization helpers, and a `localStorage` shim attaches to them without changing the command surface. Blob-download save and file-picker load follow the same pattern.
