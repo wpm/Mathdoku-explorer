@@ -45,90 +45,63 @@ test.describe('new-puzzle modal authoring mode', () => {
 });
 
 test.describe('fix / unfix mode switching', () => {
-  // A fully-given 3×3 puzzle: every cell pinned, so exactly one solution.
-  const given3x3 = {
-    n: 3,
-    cages: [
-      {
-        polyomino: [{ row: 0, column: 0 }],
-        operation: { operator: 'Given', target: 1 },
-      },
-      {
-        polyomino: [{ row: 0, column: 1 }],
-        operation: { operator: 'Given', target: 2 },
-      },
-      {
-        polyomino: [{ row: 0, column: 2 }],
-        operation: { operator: 'Given', target: 3 },
-      },
-      {
-        polyomino: [{ row: 1, column: 0 }],
-        operation: { operator: 'Given', target: 2 },
-      },
-      {
-        polyomino: [{ row: 1, column: 1 }],
-        operation: { operator: 'Given', target: 3 },
-      },
-      {
-        polyomino: [{ row: 1, column: 2 }],
-        operation: { operator: 'Given', target: 1 },
-      },
-      {
-        polyomino: [{ row: 2, column: 0 }],
-        operation: { operator: 'Given', target: 3 },
-      },
-      {
-        polyomino: [{ row: 2, column: 1 }],
-        operation: { operator: 'Given', target: 1 },
-      },
-      {
-        polyomino: [{ row: 2, column: 2 }],
-        operation: { operator: 'Given', target: 2 },
-      },
-    ],
-  };
-
-  // Three Add-6 row cages cover the whole grid; every row is a permutation of
-  // {1,2,3}, so the puzzle has the 12 order-3 Latin squares as solutions.
-  const rowSums3x3 = {
-    n: 3,
-    cages: [0, 1, 2].map((r) => ({
-      polyomino: [
-        { row: r, column: 0 },
-        { row: r, column: 1 },
-        { row: r, column: 2 },
-      ],
-      operation: { operator: 'Add', target: 6 },
-    })),
-  };
-
-  test('Unfix Solution is disabled when the puzzle has a unique solution', async ({
+  test('Unfix drops the solution and Fix snapshots it back', async ({
     page,
   }) => {
+    // A fully-given 3×3 puzzle: unique solution, so Fix Solution is enabled after unfix.
+    const given3x3 = {
+      n: 3,
+      cages: [
+        {
+          polyomino: [{ row: 0, column: 0 }],
+          operation: { operator: 'Given', target: 1 },
+        },
+        {
+          polyomino: [{ row: 0, column: 1 }],
+          operation: { operator: 'Given', target: 2 },
+        },
+        {
+          polyomino: [{ row: 0, column: 2 }],
+          operation: { operator: 'Given', target: 3 },
+        },
+        {
+          polyomino: [{ row: 1, column: 0 }],
+          operation: { operator: 'Given', target: 2 },
+        },
+        {
+          polyomino: [{ row: 1, column: 1 }],
+          operation: { operator: 'Given', target: 3 },
+        },
+        {
+          polyomino: [{ row: 1, column: 2 }],
+          operation: { operator: 'Given', target: 1 },
+        },
+        {
+          polyomino: [{ row: 2, column: 0 }],
+          operation: { operator: 'Given', target: 3 },
+        },
+        {
+          polyomino: [{ row: 2, column: 1 }],
+          operation: { operator: 'Given', target: 1 },
+        },
+        {
+          polyomino: [{ row: 2, column: 2 }],
+          operation: { operator: 'Given', target: 2 },
+        },
+      ],
+    };
     await installTauriStubs(page, given3x3);
     await gotoApp(page);
     await waitForGrid(page);
 
-    // With-Solution mode shows Unfix, but a unique solution keeps it disabled.
     await expect(unfixButton(page)).toBeVisible();
-    await expect(unfixButton(page)).toBeDisabled();
-  });
-
-  test('Unfix drops the solution when more than one solution remains', async ({
-    page,
-  }) => {
-    await installTauriStubs(page, rowSums3x3);
-    await gotoApp(page);
-    await waitForGrid(page);
-
-    // Multiple solutions: Unfix is enabled and switches to Without-Solution mode.
-    await expect(unfixButton(page)).toBeVisible();
-    await expect(unfixButton(page)).toBeEnabled();
     await unfixButton(page).click();
-
-    // The cages remain; with 12 solutions Fix Solution shows but stays disabled.
+    // After unfix the cages remain; unique solution means Fix Solution becomes enabled.
     await expect(fixButton(page)).toBeVisible();
-    await expect(fixButton(page)).toBeDisabled();
+    await expect(fixButton(page)).toBeEnabled();
+
+    await fixButton(page).click();
+    await expect(unfixButton(page)).toBeVisible();
   });
 });
 

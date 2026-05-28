@@ -111,15 +111,13 @@ pub fn Puzzle(
     let cage_cells_static = cage_cells;
     let num_cages = cages.len();
 
-    // Both solution buttons gate on whether the puzzle currently has exactly one
-    // completion. `Fix Solution` (Without-Solution mode) is enabled only when it
-    // does — the backend rejects `fix` otherwise. `Unfix Solution` (With-Solution
-    // mode) is the mirror: disabled when it does, since a puzzle with a unique
-    // solution is finished and stays fixed. Compute that once — the component
-    // re-mounts on every puzzle change. `None` while the solver runs keeps `Fix`
-    // disabled and `Unfix` enabled.
+    // `Fix Solution` is only valid when the puzzle currently has exactly one
+    // completion (the backend rejects `fix` otherwise). Compute that once — the
+    // component re-mounts on every puzzle change — and only in Without-Solution
+    // mode, where the Fix button is shown. `None` while the solver runs keeps
+    // the button disabled.
     let has_unique_solution: RwSignal<Option<bool>> = RwSignal::new(None);
-    {
+    if designer_state.get_untracked().solution.is_none() {
         let ps = partial_solution.clone();
         spawn_local(async move {
             has_unique_solution.set(Some(ps.solution_count() == Some(1)));
@@ -593,24 +591,16 @@ pub fn Puzzle(
                 {move || {
                     // `Fix Solution` is offered in Without-Solution mode; the backend
                     // rejects it unless the puzzle has exactly one completion, so it is
-                    // disabled until a unique solution exists. `Unfix Solution` is offered
-                    // in With-Solution mode and is the mirror: disabled once the puzzle has
-                    // a unique solution, since a finished puzzle stays fixed. The button
-                    // keeps a fixed width (set in CSS) so its size never changes between the
-                    // two labels.
+                    // disabled until a unique solution exists. `Unfix Solution` is
+                    // offered in With-Solution mode. The button keeps a fixed width (set
+                    // in CSS) so its size never changes between the two labels.
                     let btn_style = format!(
                         "padding:4px 10px;border:0.5px solid {LINE};border-radius:5px;\
                          background:{BG};color:{INK};font-size:12px;cursor:pointer;"
                     );
                     if designer_state.get().solution.is_some() {
-                        let enabled = has_unique_solution.get() != Some(true);
-                        let style = if enabled {
-                            btn_style
-                        } else {
-                            format!("{btn_style}opacity:0.5;cursor:default;")
-                        };
                         view! {
-                            <button class="fix-solution-btn" style=style disabled=!enabled on:click=move |_| on_unfix.run(())>"Unfix Solution"</button>
+                            <button class="fix-solution-btn" style=btn_style on:click=move |_| on_unfix.run(())>"Unfix Solution"</button>
                         }.into_any()
                     } else {
                         let enabled = has_unique_solution.get() == Some(true);
