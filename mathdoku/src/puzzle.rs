@@ -5,8 +5,8 @@
 // the cache — so using it as a `BTreeSet` key is sound.
 #![allow(clippy::mutable_key_type)]
 
+use crate::Error::CageConflict;
 use crate::Error::InvalidGridSize;
-use crate::Error::RegionConflict;
 use crate::cage::Cage;
 use crate::{Error, Polyomino};
 use serde::de::Error as DeError;
@@ -69,16 +69,15 @@ impl Puzzle {
     /// [`Grid::constrain`]: crate::Grid::constrain
     ///
     /// # Errors
-    /// Returns [`RegionConflict`] if `cage`'s polyomino overlaps an
+    /// Returns [`CageConflict`] if `cage`'s polyomino overlaps an
     /// existing cage's polyomino (but not if the cage is already present).
     pub fn insert_cage(&self, cage: Cage) -> Result<Self, Error> {
         // If the cage is already present, return a clone without error.
         if self.cages.contains(&cage) {
             return Ok(self.clone());
         }
-        let polyomino = cage.polyomino();
-        if self.intersects_cage(polyomino) {
-            return Err(RegionConflict(polyomino.clone()));
+        if self.intersects_cage(cage.polyomino()) {
+            return Err(CageConflict(cage));
         }
         let mut cages = self.cages.clone();
         let _ = cages.insert(cage);
@@ -221,16 +220,16 @@ mod tests {
     }
 
     #[test]
-    fn insert_cage_overlap_returns_region_conflict() {
+    fn insert_cage_overlap_returns_cage_conflict() {
         // A cage at (0,0)+(0,1) is already present; inserting a cage that
-        // shares cell (0,0) with a *different* polyomino is a region conflict.
+        // shares cell (0,0) with a *different* polyomino is a cage conflict.
         let p = Puzzle::new(4)
             .unwrap()
             .insert_cage(cage_at(&[(0, 0), (0, 1)], Add, 3))
             .unwrap();
         // This cage shares cell (0,0) with the existing cage but has a different polyomino.
         let overlapping = cage_at(&[(0, 0)], Given, 1);
-        assert!(matches!(p.insert_cage(overlapping), Err(RegionConflict(_))));
+        assert!(matches!(p.insert_cage(overlapping), Err(CageConflict(_))));
     }
 
     #[test]

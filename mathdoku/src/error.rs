@@ -22,10 +22,6 @@ pub enum Error {
     InvalidCell(Cell),
     /// A new [`Cage`] conflicts with an existing cage.
     CageConflict(Cage),
-    /// Two polyominos in a puzzle constructor share the same set of cells.
-    DuplicateSlotPolyomino(Polyomino),
-    /// A new polyomino conflicts with an existing one in the puzzle.
-    RegionConflict(Polyomino),
     /// A polyomino cannot support the requested [`Operation`]: either the
     /// operator is invalid for the cell count, or the target is unreachable.
     InfeasibleOperation(Polyomino, Operation),
@@ -74,13 +70,6 @@ impl fmt::Display for Error {
                     "cage {new:?} conflicts with an existing cage in the puzzle"
                 )
             }
-            Self::DuplicateSlotPolyomino(p) => {
-                write!(f, "duplicate polyomino {p:?} across puzzle slots")
-            }
-            Self::RegionConflict(p) => write!(
-                f,
-                "region {p:?} conflicts with an existing slot in the puzzle"
-            ),
             Self::InfeasibleOperation(p, op) => {
                 write!(f, "operation {op:?} is infeasible for polyomino {p:?}")
             }

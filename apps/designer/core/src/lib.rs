@@ -698,7 +698,7 @@ mod tests {
         }
 
         #[test]
-        fn insert_cage_overlap_is_region_conflict() {
+        fn insert_cage_overlap_is_cage_conflict() {
             let mut state = AppState::default();
             let _ = new_empty(&mut state, 4).unwrap();
             let _ = insert_cage(
@@ -709,12 +709,10 @@ mod tests {
             )
             .unwrap();
             let r = insert_cage(&mut state, &cells(&[(0, 0)]), Operator::Given, Some(1));
-            // TODO(#68): #55 expected `CageConflict`, but an overlapping region
-            // surfaces as the mathdoku-level `RegionConflict` (the variant
-            // actually produced — `CageConflict` is never constructed).
+            // An overlapping region surfaces as the mathdoku-level `CageConflict`.
             assert!(matches!(
                 r,
-                Err(Error::Mathdoku(mathdoku::Error::RegionConflict(_)))
+                Err(Error::Mathdoku(mathdoku::Error::CageConflict(_)))
             ));
         }
 
