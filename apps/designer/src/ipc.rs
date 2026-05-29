@@ -14,7 +14,7 @@
     unused_results,                  // quit_app discards its fire-and-forget JsValue
 )]
 
-use mathdoku::{Cell, Operator, Target};
+use mathdoku::{Cell, Operator, Polyomino, Target};
 use mathdoku_designer_core::{DocState, SaveResult, State};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -77,8 +77,8 @@ struct InsertCageArgs {
 }
 
 #[derive(Serialize)]
-struct RemoveCageArgs {
-    cells: Vec<Cell>,
+struct RemoveCageAtArgs {
+    polyomino: Polyomino,
 }
 
 #[derive(Serialize)]
@@ -179,8 +179,8 @@ pub async fn insert_cage(
     .await
 }
 
-pub async fn remove_cage(cells: Vec<Cell>) -> Result<State, IpcError> {
-    call("remove_cage", RemoveCageArgs { cells }).await
+pub async fn remove_cage_at(polyomino: Polyomino) -> Result<State, IpcError> {
+    call("remove_cage_at", RemoveCageAtArgs { polyomino }).await
 }
 
 /// Snapshots the unique completion into the solution (Without-Solution →

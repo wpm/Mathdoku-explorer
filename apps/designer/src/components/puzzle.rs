@@ -367,16 +367,17 @@ pub fn Puzzle(
                 let active_cell = Cell::new(r, c);
                 if let Some(cage_idx) = partial_solution.cage_index_at(r, c) {
                     // Active cell is in a committed cage — demote it to provisional.
-                    let cells = cage_cells_static[cage_idx].clone();
-                    demote_cage(
-                        cells,
-                        undo_stack,
-                        redo_stack,
-                        designer_state,
-                        on_puzzle_change,
-                        open_selector,
-                        on_error,
-                    );
+                    if let Ok(poly) = Polyomino::from_cells(&cage_cells_static[cage_idx]) {
+                        demote_cage(
+                            poly,
+                            undo_stack,
+                            redo_stack,
+                            designer_state,
+                            on_puzzle_change,
+                            open_selector,
+                            on_error,
+                        );
+                    }
                 } else {
                     remove_provisional(&st, active_cell); // else: uncovered cell — does nothing
                 }
@@ -387,15 +388,16 @@ pub fn Puzzle(
                 if let Some(cage_idx) = partial_solution.cage_index_at(r, c) {
                     // Active cell is in a committed cage — delete it outright
                     // (no demotion to a provisional cage).
-                    let cells = cage_cells_static[cage_idx].clone();
-                    delete_cage(
-                        cells,
-                        undo_stack,
-                        redo_stack,
-                        designer_state,
-                        on_puzzle_change,
-                        on_error,
-                    );
+                    if let Ok(poly) = Polyomino::from_cells(&cage_cells_static[cage_idx]) {
+                        delete_cage(
+                            poly,
+                            undo_stack,
+                            redo_stack,
+                            designer_state,
+                            on_puzzle_change,
+                            on_error,
+                        );
+                    }
                 } else {
                     remove_provisional(&st, active_cell); // else: uncovered cell — does nothing
                 }

@@ -6,7 +6,7 @@ use std::collections::BTreeSet;
 
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use mathdoku::{Cell, Operator, Polyomino, Target};
+use mathdoku::{Operator, Polyomino, Target};
 use mathdoku_designer_core::State;
 
 use crate::ipc;
@@ -72,7 +72,7 @@ pub fn commit_cage(
     });
 }
 
-/// Deletes a committed cage outright via the `remove_cage` Tauri command.
+/// Deletes a committed cage outright via the `remove_cage_at` Tauri command.
 ///
 /// Unlike [`demote_cage`], the removed cage is *not* re-added as a provisional
 /// cage and no operation selector is opened — the cells become uncovered. On
@@ -80,7 +80,7 @@ pub fn commit_cage(
 /// preserves the existing provisional cages and active cell, and calls
 /// `on_puzzle_change`. On IPC error, calls `on_error`.
 pub fn delete_cage(
-    cells: Vec<Cell>,
+    poly: Polyomino,
     undo_stack: RwSignal<Vec<State>>,
     redo_stack: RwSignal<Vec<State>>,
     designer_state: RwSignal<State>,
@@ -88,7 +88,7 @@ pub fn delete_cage(
     on_error: Callback<String>,
 ) {
     spawn_local(async move {
-        let new_st = match ipc::remove_cage(cells).await {
+        let new_st = match ipc::remove_cage_at(poly).await {
             Ok(st) => st,
             Err(e) => {
                 on_error.run(e.to_string());
@@ -106,14 +106,14 @@ pub fn delete_cage(
     });
 }
 
-/// Demotes a committed cage back to a provisional cage via the `remove_cage` Tauri command,
+/// Demotes a committed cage back to a provisional cage via the `remove_cage_at` Tauri command,
 /// then opens the operation selector for it.
 ///
 /// On success, pushes the pre-demote state onto `undo_stack`, clears `redo_stack`, adds the
 /// cage's polyomino to `provisional_cages`, and calls `on_open_selector` with the polyomino
 /// so the caller can show the operation selector. On IPC error, calls `on_error`.
 pub fn demote_cage(
-    cells: Vec<Cell>,
+    poly: Polyomino,
     undo_stack: RwSignal<Vec<State>>,
     redo_stack: RwSignal<Vec<State>>,
     designer_state: RwSignal<State>,
@@ -122,16 +122,12 @@ pub fn demote_cage(
     on_error: Callback<String>,
 ) {
     spawn_local(async move {
-        let new_st = match ipc::remove_cage(cells.clone()).await {
+        let new_st = match ipc::remove_cage_at(poly.clone()).await {
             Ok(st) => st,
             Err(e) => {
                 on_error.run(e.to_string());
                 return;
             }
-        };
-        let Ok(poly) = Polyomino::from_cells(&cells) else {
-            on_error.run("invalid polyomino".into());
-            return;
         };
         let mut parked = designer_state.get_untracked().provisional_cages;
         parked.insert(poly.clone());

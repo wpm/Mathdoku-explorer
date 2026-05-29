@@ -93,11 +93,11 @@ export async function installTauriStubs(
                 (args as { title?: string } | undefined)?.title ?? '';
               return Promise.resolve(null);
             }
-            if (cmd === 'remove_cage') {
+            if (cmd === 'remove_cage_at') {
               const typedArgs = args as
-                | { cells?: { row: number; column: number }[] }
+                | { polyomino?: { row: number; column: number }[] }
                 | undefined;
-              const removeCells = typedArgs?.cells ?? [];
+              const removeCells = typedArgs?.polyomino ?? [];
               const currentPuzzle = puzzle as BareP;
               if (!currentPuzzle) return Promise.resolve(null);
               const cages = (currentPuzzle.cages ?? []).filter(

@@ -12,7 +12,7 @@
 //! the free functions take `&mut AppState` and leave synchronization to the
 //! caller.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::BTreeSet;
 
 use mathdoku::{Cage, Cell, Grid, Operation, Operator, Polyomino, Puzzle, generate_latin_square};
 use rand::Rng;
@@ -241,7 +241,7 @@ pub(crate) fn constrain_current(
 
 /// Stores `new_puzzle` and its re-constrained grid into `state`, marks dirty,
 /// and returns the updated designer state. Shared tail of `insert_cage` and
-/// `remove_cage`.
+/// `remove_cage_at`.
 fn commit_puzzle(state: &mut AppState, new_puzzle: Puzzle) -> Result<State, Error> {
     let new_current = constrain_current(state.solution.as_ref(), &new_puzzle)?;
     state.puzzle = Some(new_puzzle);
@@ -347,31 +347,19 @@ pub fn insert_cage(
     commit_puzzle(state, new_puzzle)
 }
 
-/// Removes the cage whose cell set matches `cells` from the current puzzle.
+/// Removes the cage covering `polyomino` from the current puzzle.
 ///
 /// Returns the updated designer `State`.
 ///
 /// # Errors
-/// Returns an error if no puzzle is loaded, the cells form an invalid polyomino,
-/// or no matching cage is found.
-pub fn remove_cage(state: &mut AppState, cells: &[Cell]) -> Result<State, Error> {
+/// Returns an error if no puzzle is loaded or no cage covers exactly `polyomino`.
+pub fn remove_cage_at(state: &mut AppState, polyomino: &Polyomino) -> Result<State, Error> {
     let puzzle = state.puzzle.as_ref().ok_or(Error::NoPuzzle)?;
-    let target_cells: HashSet<_> = cells.iter().copied().collect();
-    let n = puzzle.n();
-    let remaining_cages: Vec<Cage> = puzzle
-        .cages()
-        .filter(|cage| {
-            let cage_cells: HashSet<_> = cage.cells().into_iter().collect();
-            cage_cells != target_cells
-        })
-        .cloned()
-        .collect();
-    if remaining_cages.len() == puzzle.cages().count() {
-        return Err(Error::CageNotFound);
-    }
-    let new_puzzle = remaining_cages
-        .into_iter()
-        .try_fold(Puzzle::new(n)?, |p, cage| p.insert_cage(cage))?;
+    let cage = puzzle
+        .get_cage_at(polyomino)
+        .ok_or(Error::CageNotFound)?
+        .clone();
+    let new_puzzle = puzzle.remove_cage(&cage);
     commit_puzzle(state, new_puzzle)
 }
 
@@ -678,9 +666,9 @@ mod tests {
         use super::helpers::cells;
         use crate::{
             AppState, Error, SaveEnvelope, apply_loaded, fix, insert_cage, new_empty,
-            new_latin_square, remove_cage, serialize_save, unfix,
+            new_latin_square, remove_cage_at, serialize_save, unfix,
         };
-        use mathdoku::{Cell, Operator, Puzzle};
+        use mathdoku::{Cell, Operator, Polyomino, Puzzle};
         use rand::{SeedableRng, rngs::StdRng};
         use serde_json::to_string;
 
@@ -764,38 +752,28 @@ mod tests {
             assert!(st.current.cell_values(region[0]).unwrap().is_empty());
         }
 
-        // --- remove_cage ---
+        // --- remove_cage_at ---
+
+        fn poly(positions: &[(usize, usize)]) -> Polyomino {
+            Polyomino::from_cells(&cells(positions)).unwrap()
+        }
 
         #[test]
-        fn remove_cage_no_puzzle_errors() {
+        fn remove_cage_at_no_puzzle_errors() {
             let mut state = AppState::default();
             assert!(matches!(
-                remove_cage(&mut state, &cells(&[(0, 0)])),
+                remove_cage_at(&mut state, &poly(&[(0, 0)])),
                 Err(Error::NoPuzzle)
             ));
         }
 
         #[test]
-        fn remove_cage_unknown_cell_set_is_cage_not_found() {
+        fn remove_cage_at_unknown_polyomino_is_cage_not_found() {
             let mut state = AppState::default();
             let _ = new_empty(&mut state, 4).unwrap();
             let _ = insert_cage(&mut state, &cells(&[(0, 0)]), Operator::Given, Some(1)).unwrap();
             assert!(matches!(
-                remove_cage(&mut state, &cells(&[(1, 1)])),
-                Err(Error::CageNotFound)
-            ));
-        }
-
-        #[test]
-        fn remove_cage_disconnected_cells_is_cage_not_found() {
-            // TODO(#68): #55 expected a mathdoku polyomino error here. remove_cage
-            // never builds a Polyomino from `cells`; a disconnected set simply
-            // matches no committed cage.
-            let mut state = AppState::default();
-            let _ = new_empty(&mut state, 4).unwrap();
-            let _ = insert_cage(&mut state, &cells(&[(0, 0)]), Operator::Given, Some(1)).unwrap();
-            assert!(matches!(
-                remove_cage(&mut state, &cells(&[(0, 0), (2, 2)])),
+                remove_cage_at(&mut state, &poly(&[(1, 1)])),
                 Err(Error::CageNotFound)
             ));
         }
@@ -1000,7 +978,9 @@ mod tests {
 
     mod invariants {
         use super::helpers::{all_cells, cells, unique_3x3_app_state, with_solution_3x3};
-        use crate::{AppState, fix, insert_cage, new_empty, new_latin_square, remove_cage, unfix};
+        use crate::{
+            AppState, fix, insert_cage, new_empty, new_latin_square, remove_cage_at, unfix,
+        };
         use mathdoku::{Cell, Grid, Values};
         use rand::{SeedableRng, rngs::StdRng};
 
@@ -1107,7 +1087,8 @@ mod tests {
                 Some(2),
             )
             .unwrap();
-            let _ = remove_cage(&mut state, &region).unwrap();
+            let poly = mathdoku::Polyomino::from_cells(&region).unwrap();
+            let _ = remove_cage_at(&mut state, &poly).unwrap();
             let puzzle = state.puzzle.as_ref().unwrap();
             assert!(!puzzle.cages().any(|c| c.cells() == region));
             assert!(puzzle.cages().any(|c| c.cells() == cells(&[(1, 0)])));
@@ -1784,7 +1765,7 @@ mod tests {
 
     mod properties {
         use crate::{
-            AppState, apply_loaded, insert_cage, new_empty, new_latin_square, remove_cage,
+            AppState, apply_loaded, insert_cage, new_empty, new_latin_square, remove_cage_at,
             serialize_save, unfix,
         };
         use mathdoku::{Cell, Grid, Operator};
@@ -1855,7 +1836,12 @@ mod tests {
                     )
                     .is_ok()
                 }
-                Op::Remove { r, c } => remove_cage(state, &[Cell::new(r, c)]).is_ok(),
+                Op::Remove { r, c } => {
+                    let Ok(poly) = mathdoku::Polyomino::from_cells(&[Cell::new(r, c)]) else {
+                        return false;
+                    };
+                    remove_cage_at(state, &poly).is_ok()
+                }
             }
         }
 

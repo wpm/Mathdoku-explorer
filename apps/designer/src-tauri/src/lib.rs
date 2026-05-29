@@ -203,7 +203,7 @@ pub fn run() {
             set_window_title,
             quit_app,
             insert_cage,
-            remove_cage,
+            remove_cage_at,
             fix,
             unfix,
         ])

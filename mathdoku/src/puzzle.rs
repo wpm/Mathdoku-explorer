@@ -98,6 +98,12 @@ impl Puzzle {
         Self { n: self.n, cages }
     }
 
+    /// Returns the cage covering exactly the cells of `polyomino`, or `None` if no such cage exists.
+    #[must_use]
+    pub fn get_cage_at(&self, polyomino: &Polyomino) -> Option<&Cage> {
+        self.cages.iter().find(|cage| cage.polyomino() == polyomino)
+    }
+
     fn intersects_cage(&self, polyomino: &Polyomino) -> bool {
         self.cages
             .iter()
@@ -146,11 +152,11 @@ mod tests {
     use serde_json::{from_str, to_string};
 
     use super::*;
-    use crate::Target;
     use crate::cage::Cage;
     use crate::operation::Operator::{Add, Given};
     use crate::operation::{Operation, Operator};
     use crate::polyomino::Polyomino;
+    use crate::{Cell, Target};
 
     fn cage_at(positions: &[(usize, usize)], operator: Operator, target: Target) -> Cage {
         let cells: Vec<crate::Cell> = positions
@@ -260,6 +266,23 @@ mod tests {
         let p = Puzzle::new(4).unwrap().insert_cage(cage.clone()).unwrap();
         let _ = p.remove_cage(&cage);
         assert_eq!(p.cages().count(), 1);
+    }
+
+    // --- Puzzle::get_cage_at ---
+
+    #[test]
+    fn get_cage_at_returns_cage_for_present_polyomino() {
+        let cage = cage_at(&[(0, 0), (0, 1)], Add, 3);
+        let p = Puzzle::new(4).unwrap().insert_cage(cage.clone()).unwrap();
+        let poly = Polyomino::from_cells(&[Cell::new(0, 0), Cell::new(0, 1)]).unwrap();
+        assert_eq!(p.get_cage_at(&poly), Some(&cage));
+    }
+
+    #[test]
+    fn get_cage_at_returns_none_for_absent_polyomino() {
+        let p = Puzzle::new(4).unwrap();
+        let poly = Polyomino::from_cells(&[Cell::new(0, 0)]).unwrap();
+        assert!(p.get_cage_at(&poly).is_none());
     }
 
     // --- Puzzle::cages ---

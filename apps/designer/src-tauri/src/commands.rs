@@ -10,7 +10,7 @@ use std::sync::{Mutex, PoisonError};
 use serde::{Deserialize, Serialize};
 use serde_json::{from_str, to_string};
 
-use mathdoku::{Cell, Operator};
+use mathdoku::{Cell, Operator, Polyomino};
 use mathdoku_designer_core::{self as core, AppState, DocState, SaveResult, State};
 use tauri::{AppHandle, Manager, Runtime, State as TauriState};
 
@@ -217,13 +217,15 @@ pub fn unfix(state: TauriState<Mutex<AppState>>) -> Result<State, String> {
     core::unfix(&mut s).map_err(|e| e.to_string())
 }
 
-/// Removes the cage whose cell set matches `cells` from the current puzzle.
+/// Removes the cage covering `polyomino` from the current puzzle.
 ///
 /// # Errors
-/// Returns an error string if no puzzle is loaded, the cells form an invalid
-/// polyomino, or no matching cage is found.
+/// Returns an error string if no puzzle is loaded or no cage covers exactly `polyomino`.
 #[tauri::command]
-pub fn remove_cage(cells: Vec<Cell>, state: TauriState<Mutex<AppState>>) -> Result<State, String> {
+pub fn remove_cage_at(
+    polyomino: Polyomino,
+    state: TauriState<Mutex<AppState>>,
+) -> Result<State, String> {
     let mut s = state.lock().map_err(|e| e.to_string())?;
-    core::remove_cage(&mut s, &cells).map_err(|e| e.to_string())
+    core::remove_cage_at(&mut s, &polyomino).map_err(|e| e.to_string())
 }
