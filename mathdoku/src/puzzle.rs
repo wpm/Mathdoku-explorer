@@ -12,6 +12,7 @@ use crate::{Error, Polyomino};
 use serde::de::Error as DeError;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::BTreeSet;
+use std::fmt::{Display, Formatter};
 
 // Serde wire format.
 #[derive(Serialize, Deserialize)]
@@ -128,6 +129,18 @@ impl<'de> Deserialize<'de> for Puzzle {
     }
 }
 
+impl Display for Puzzle {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}×{} puzzle, {} cages",
+            self.n,
+            self.n,
+            self.cages.len()
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::{from_str, to_string};
@@ -145,7 +158,7 @@ mod tests {
             .map(|&(r, c)| crate::Cell::new(r, c))
             .collect();
         let poly = Polyomino::from_cells(&cells).unwrap();
-        Cage::new(poly, Operation::new(operator, target))
+        Cage::new(poly, Operation::new(operator, target)).unwrap()
     }
 
     // --- Puzzle::new ---
@@ -254,7 +267,7 @@ mod tests {
     #[test]
     fn cages_returns_all_inserted_cages() {
         let c1 = cage_at(&[(0, 0)], Given, 1);
-        let c2 = cage_at(&[(0, 1)], Add, 2);
+        let c2 = cage_at(&[(0, 1)], Given, 2);
         let p = Puzzle::new(4)
             .unwrap()
             .insert_cage(c1.clone())
@@ -279,6 +292,15 @@ mod tests {
         let json = to_string(&p).unwrap();
         let restored: Puzzle = from_str(&json).unwrap();
         assert_eq!(p, restored);
+    }
+
+    #[test]
+    fn display_shows_dimensions_and_cage_count() {
+        let p = Puzzle::new(4).unwrap();
+        assert_eq!(p.to_string(), "4×4 puzzle, 0 cages");
+        let cage = cage_at(&[(0, 0)], Given, 1);
+        let p = p.insert_cage(cage).unwrap();
+        assert_eq!(p.to_string(), "4×4 puzzle, 1 cages");
     }
 
     #[test]

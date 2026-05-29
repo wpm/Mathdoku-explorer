@@ -332,7 +332,7 @@ mod tests {
     use rand_chacha::ChaCha8Rng;
 
     use super::*;
-    use crate::operation::operators;
+    use crate::operation::operators_for;
     use crate::test_utils::{cells, col_pair, l_shape, pair, singleton};
 
     impl Mdd {
@@ -451,7 +451,7 @@ mod tests {
         for shape in &shapes {
             let k = shape.len();
             for n in 3..=9 {
-                for operator in operators(shape) {
+                for operator in operators_for(shape) {
                     for target in targets(&operator, n, k) {
                         assert_equiv(n, shape, &Operation::new(operator.clone(), target));
                     }
@@ -641,7 +641,7 @@ mod tests {
         for shape in &shapes {
             let k = shape.len();
             for n in 3..=6 {
-                for operator in operators(shape) {
+                for operator in operators_for(shape) {
                     let ts = targets(&operator, n, k);
                     for _ in 0..6 {
                         let target = ts[rng.random_range(0..ts.len())];

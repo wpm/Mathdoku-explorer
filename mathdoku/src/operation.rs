@@ -12,7 +12,7 @@
 //! | [`Divide`](Operator::Divide) | exactly 2 | cells have ratio equal to target |
 //! | [`Given`](Operator::Given) | exactly 1 | cell equals target |
 //!
-//! The [`operators`] function returns the valid operators for a cage based on its
+//! The [`operators_for`] function returns the valid operators for a cage based on its
 //! polyomino's size: singletons allow only `Given`; pairs allow all four binary
 //! operators; larger cages allow only `Add` and `Multiply`.
 
@@ -38,6 +38,12 @@ impl Operation {
     #[must_use]
     pub const fn new(operator: Operator, target: Target) -> Self {
         Self { operator, target }
+    }
+
+    /// The operator of this operation.
+    #[must_use]
+    pub fn operator(&self) -> Operator {
+        self.operator.clone()
     }
 }
 
@@ -82,7 +88,7 @@ impl Display for Operator {
 /// - 3+ cells: [`Operator::Add`] and [`Operator::Multiply`] only
 ///   (subtraction and division are undefined for more than two operands).
 #[must_use]
-pub fn operators(polynomial: &Polyomino) -> Vec<Operator> {
+pub fn operators_for(polynomial: &Polyomino) -> Vec<Operator> {
     match polynomial.len() {
         1 => vec![Operator::Given],
         2 => vec![
@@ -127,12 +133,12 @@ mod tests {
 
     #[test]
     fn operators_singleton() {
-        assert_eq!(operators(&singleton()), vec![Operator::Given]);
+        assert_eq!(operators_for(&singleton()), vec![Operator::Given]);
     }
 
     #[test]
     fn operators_pair() {
-        let ops = operators(&pair());
+        let ops = operators_for(&pair());
         assert!(ops.contains(&Operator::Add));
         assert!(ops.contains(&Operator::Subtract));
         assert!(ops.contains(&Operator::Multiply));
@@ -142,7 +148,7 @@ mod tests {
 
     #[test]
     fn operators_large() {
-        let ops = operators(&l_shape());
+        let ops = operators_for(&l_shape());
         assert!(ops.contains(&Operator::Add));
         assert!(ops.contains(&Operator::Multiply));
         assert!(!ops.contains(&Operator::Subtract));

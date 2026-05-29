@@ -1433,18 +1433,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gloo-timers"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbb143cf96099802033e0d4f4963b19fd2e0b728bcf076cd9cf7f6634f092994"
-dependencies = [
- "futures-channel",
- "futures-core",
- "js-sys",
- "wasm-bindgen",
-]
-
-[[package]]
 name = "gloo-utils"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2299,7 +2287,6 @@ dependencies = [
  "rand_chacha 0.10.0",
  "serde",
  "serde_json",
- "strum",
 ]
 
 [[package]]
@@ -2335,14 +2322,12 @@ version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
  "getrandom 0.4.2",
- "gloo-timers",
  "js-sys",
  "leptos",
  "mathdoku",
  "mathdoku-designer-core",
  "serde",
  "serde-wasm-bindgen",
- "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
@@ -3940,27 +3925,6 @@ name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
-
-[[package]]
-name = "strum"
-version = "0.28.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9628de9b8791db39ceda2b119bbe13134770b56c138ec1d3af810d045c04f9bd"
-dependencies = [
- "strum_macros",
-]
-
-[[package]]
-name = "strum_macros"
-version = "0.28.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ab85eea0270ee17587ed4156089e10b9e6880ee688791d45a905f5b1ca36f664"
-dependencies = [
- "heck 0.5.0",
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
 
 [[package]]
 name = "swift-rs"

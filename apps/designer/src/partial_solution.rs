@@ -107,7 +107,7 @@ mod tests {
     fn cage_at(positions: &[(usize, usize)], op: Operator, target: u64) -> Cage {
         let cells: Vec<Cell> = positions.iter().map(|&(r, c)| Cell::new(r, c)).collect();
         let poly = Polyomino::from_cells(&cells).unwrap();
-        Cage::new(poly, Operation::new(op, target))
+        Cage::new(poly, Operation::new(op, target)).unwrap()
     }
 
     /// A 3×3 puzzle whose cells are pinned to the Latin square

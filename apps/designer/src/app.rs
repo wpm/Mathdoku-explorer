@@ -10,6 +10,7 @@ use leptos::task::spawn_local;
 use mathdoku_designer_core::State;
 use wasm_bindgen::prelude::*;
 
+use crate::components::{PendingCommit, Puzzle};
 use crate::ipc;
 use crate::keys::{ESCAPE, TAB};
 use crate::theme::{ACCENT, BG, INK, INK2, LINE, SANS as SANS_FONT};
@@ -374,7 +375,7 @@ pub fn App() -> impl IntoView {
     let current_path: RwSignal<Option<String>> = RwSignal::new(None);
     let undo_stack: RwSignal<Vec<State>> = RwSignal::new(Vec::new());
     let redo_stack: RwSignal<Vec<State>> = RwSignal::new(Vec::new());
-    let pending_commit: RwSignal<Option<crate::components::PendingCommit>> = RwSignal::new(None);
+    let pending_commit: RwSignal<Option<PendingCommit>> = RwSignal::new(None);
 
     // Check if a puzzle was already restored from the recent file on startup.
     // If not, show the Size Modal so the user can create a new puzzle.
@@ -396,27 +397,25 @@ pub fn App() -> impl IntoView {
         listen("menu-new", new_cb.as_ref().unchecked_ref()).await;
         new_cb.forget();
 
-        let save_cb = Closure::wrap(Box::new(move |_: JsValue| {
-            spawn_local(async move {
-                match call_save_puzzle().await {
-                    Ok(Some(path)) => current_path.set(Some(path)),
-                    Ok(None) => {} // user cancelled dialog
-                    Err(e) => error_msg.set(Some(e.to_string())),
-                }
-            });
-        }) as Box<dyn Fn(JsValue)>);
+        #[allow(clippy::type_complexity)]
+        let make_save_cb = move |fut_fn: fn() -> std::pin::Pin<
+            Box<dyn Future<Output = Result<Option<String>, ipc::IpcError>>>,
+        >| {
+            Closure::wrap(Box::new(move |_: JsValue| {
+                spawn_local(async move {
+                    match fut_fn().await {
+                        Ok(Some(path)) => current_path.set(Some(path)),
+                        Ok(None) => {} // user cancelled dialog
+                        Err(e) => error_msg.set(Some(e.to_string())),
+                    }
+                });
+            }) as Box<dyn Fn(JsValue)>)
+        };
+        let save_cb = make_save_cb(|| Box::pin(call_save_puzzle()));
         listen("menu-save", save_cb.as_ref().unchecked_ref()).await;
         save_cb.forget();
 
-        let save_as_cb = Closure::wrap(Box::new(move |_: JsValue| {
-            spawn_local(async move {
-                match call_save_as_puzzle().await {
-                    Ok(Some(path)) => current_path.set(Some(path)),
-                    Ok(None) => {} // user cancelled dialog
-                    Err(e) => error_msg.set(Some(e.to_string())),
-                }
-            });
-        }) as Box<dyn Fn(JsValue)>);
+        let save_as_cb = make_save_cb(|| Box::pin(call_save_as_puzzle()));
         listen("menu-save-as", save_as_cb.as_ref().unchecked_ref()).await;
         save_as_cb.forget();
 
@@ -426,8 +425,8 @@ pub fn App() -> impl IntoView {
                     Ok(Some(st)) => {
                         let ds = ipc::get_doc_state().await;
                         current_path.set(ds.path);
-                        undo_stack.update(std::vec::Vec::clear);
-                        redo_stack.update(std::vec::Vec::clear);
+                        undo_stack.update(Vec::clear);
+                        redo_stack.update(Vec::clear);
                         pending_commit.set(None);
                         designer_state.set(Some(st));
                         // Loading a puzzle satisfies the New Puzzle condition, so
@@ -455,8 +454,8 @@ pub fn App() -> impl IntoView {
     let install_new_state = move |result: Result<State, ipc::IpcError>| match result {
         Ok(st) => {
             current_path.set(None);
-            undo_stack.update(std::vec::Vec::clear);
-            redo_stack.update(std::vec::Vec::clear);
+            undo_stack.update(Vec::clear);
+            redo_stack.update(Vec::clear);
             pending_commit.set(None);
             designer_state.set(Some(st));
         }
@@ -512,7 +511,7 @@ pub fn App() -> impl IntoView {
             // on_puzzle_change already handles via the state prop).
             let on_state_change = Callback::new(move |_new_st: State| {});
             let on_error = Callback::new(move |msg: String| error_msg.set(Some(msg)));
-            view! { <crate::components::Puzzle state=st undo_stack=undo_stack redo_stack=redo_stack pending_commit=pending_commit on_puzzle_change=on_puzzle_change on_state_change=on_state_change on_error=on_error /> }
+            view! { <Puzzle state=st undo_stack=undo_stack redo_stack=redo_stack pending_commit=pending_commit on_puzzle_change=on_puzzle_change on_state_change=on_state_change on_error=on_error /> }
         })}
             {move || show_size_modal.get().then(|| view! {
                 <SizeModal

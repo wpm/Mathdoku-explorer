@@ -11,10 +11,11 @@ use std::cmp::Ordering;
 use std::hash::{Hash, Hasher};
 use std::sync::OnceLock;
 
-use crate::Cell;
+use crate::Error::InfeasibleOperation;
 use crate::mdd::Mdd;
 use crate::operation::Operation;
 use crate::polyomino::Polyomino;
+use crate::{Cell, Error, operators_for};
 
 /// A polyomino with an [`Operation`] constraining its cell values.
 ///
@@ -32,13 +33,19 @@ pub struct Cage {
 
 impl Cage {
     /// Creates a cage from a polyomino and an operation.
-    #[must_use]
-    pub const fn new(polyomino: Polyomino, operation: Operation) -> Self {
-        Self {
+    ///
+    /// # Errors
+    /// Returns [`InfeasibleOperation`] if the operator is not valid for
+    /// the polyomino's size.
+    pub fn new(polyomino: Polyomino, operation: Operation) -> Result<Self, Error> {
+        if !operators_for(&polyomino).contains(&operation.operator()) {
+            return Err(InfeasibleOperation(polyomino, operation));
+        }
+        Ok(Self {
             polyomino,
             operation,
             mdd: OnceLock::new(),
-        }
+        })
     }
 
     /// Returns the cells covered by this cage.
@@ -99,7 +106,7 @@ mod tests {
     use crate::{Operator, Target};
 
     fn cage(polyomino: Polyomino, operator: Operator, target: Target) -> Cage {
-        Cage::new(polyomino, Operation { operator, target })
+        Cage::new(polyomino, Operation { operator, target }).unwrap()
     }
 
     // --- equality and hashing ignore the MDD cache ---

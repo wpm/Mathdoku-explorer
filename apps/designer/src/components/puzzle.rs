@@ -11,7 +11,7 @@
 
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use mathdoku::{Cage, Cell, Grid, Operation, Operator, Polyomino, Target, operators};
+use mathdoku::{Cage, Cell, Grid, Operation, Operator, Polyomino, Target, operators_for};
 use mathdoku_designer_core::State;
 
 use super::cage::Cage as CageComponent;
@@ -136,7 +136,7 @@ pub fn Puzzle(
     let open_selector = Callback::new(move |poly: Polyomino| {
         let st = designer_state.get_untracked();
         let without_solution = st.solution.is_none();
-        let allowed = operators(&poly);
+        let allowed = operators_for(&poly);
         // With-Solution singletons commit immediately (Given target read from the
         // solution); they never open the selector. Without-Solution singletons
         // need a target chosen, so they do open it.
@@ -144,12 +144,7 @@ pub fn Puzzle(
             return;
         }
         let poly_for_cb = poly.clone();
-        let parked: std::collections::BTreeSet<Polyomino> = st
-            .provisional_cages
-            .iter()
-            .filter(|p| p.cells() != poly.cells())
-            .cloned()
-            .collect();
+        let parked = parked_cages(&st, &poly);
         let on_commit = Callback::new(move |(op, target): (Operator, Option<Target>)| {
             pending_commit.set(None);
             commit_cage(
@@ -178,7 +173,7 @@ pub fn Puzzle(
             spawn_local(async move {
                 let pairs =
                     crate::feasibility::cached_feasible_op_targets(&puzzle, &poly_for_query);
-                sig.set(FeasibilityState::Ready(pairs));
+                sig.set(FeasibilityState::Ready(pairs.unwrap_or_default()));
             });
             sig
         });
@@ -191,6 +186,20 @@ pub fn Puzzle(
             picked_operator,
         }));
     });
+
+    // Helper: if the active cell is in a provisional cage, remove that cage.
+    let remove_provisional = move |st: &State, active_cell: Cell| {
+        if let Some(poly) = st
+            .provisional_cages
+            .iter()
+            .find(|p| p.cells().contains(&active_cell))
+            .cloned()
+        {
+            let mut new_st = st.clone();
+            new_st.provisional_cages.remove(&poly);
+            set_state(new_st);
+        }
+    };
 
     // Helper: swap the undo/redo stacks and apply the restored state.
     let apply_history = move |from: RwSignal<Vec<State>>, to: RwSignal<Vec<State>>| {
@@ -208,38 +217,25 @@ pub fn Puzzle(
     // Mode switching: `fix` snapshots the unique completion, `unfix` drops it.
     // Both go through the backend (which owns the persisted solution) and are
     // pushed onto the undo stack like any other puzzle change.
-    let on_fix = Callback::new(move |(): ()| {
-        spawn_local(async move {
-            match ipc::fix().await {
-                Ok(mut new_st) => {
-                    let pre = designer_state.get_untracked();
-                    new_st.provisional_cages.clone_from(&pre.provisional_cages);
-                    new_st.active = pre.active;
-                    undo_stack.update(|s| s.push(pre));
-                    redo_stack.update(std::vec::Vec::clear);
-                    designer_state.set(new_st.clone());
-                    on_puzzle_change.run(new_st);
+    let mode_switch =
+        move |fut: std::pin::Pin<Box<dyn Future<Output = Result<State, ipc::IpcError>>>>| {
+            spawn_local(async move {
+                match fut.await {
+                    Ok(mut new_st) => {
+                        let pre = designer_state.get_untracked();
+                        new_st.provisional_cages.clone_from(&pre.provisional_cages);
+                        new_st.active = pre.active;
+                        undo_stack.update(|s| s.push(pre));
+                        redo_stack.update(Vec::clear);
+                        designer_state.set(new_st.clone());
+                        on_puzzle_change.run(new_st);
+                    }
+                    Err(e) => on_error.run(e.to_string()),
                 }
-                Err(e) => on_error.run(e.to_string()),
-            }
-        });
-    });
-    let on_unfix = Callback::new(move |(): ()| {
-        spawn_local(async move {
-            match ipc::unfix().await {
-                Ok(mut new_st) => {
-                    let pre = designer_state.get_untracked();
-                    new_st.provisional_cages.clone_from(&pre.provisional_cages);
-                    new_st.active = pre.active;
-                    undo_stack.update(|s| s.push(pre));
-                    redo_stack.update(std::vec::Vec::clear);
-                    designer_state.set(new_st.clone());
-                    on_puzzle_change.run(new_st);
-                }
-                Err(e) => on_error.run(e.to_string()),
-            }
-        });
-    });
+            });
+        };
+    let on_fix = Callback::new(move |(): ()| mode_switch(Box::pin(ipc::fix())));
+    let on_unfix = Callback::new(move |(): ()| mode_switch(Box::pin(ipc::unfix())));
 
     let on_keydown = move |ev: leptos::ev::KeyboardEvent| {
         let key = ev.key();
@@ -381,17 +377,9 @@ pub fn Puzzle(
                         open_selector,
                         on_error,
                     );
-                } else if let Some(poly) = st
-                    .provisional_cages
-                    .iter()
-                    .find(|p| p.cells().contains(&active_cell))
-                    .cloned()
-                {
-                    // Active cell is in a provisional cage — delete it.
-                    let mut new_st = st.clone();
-                    new_st.provisional_cages.remove(&poly);
-                    set_state(new_st);
-                } // else: uncovered cell — do nothing
+                } else {
+                    remove_provisional(&st, active_cell); // else: uncovered cell — does nothing
+                }
             }
             DELETE | BACKSPACE => {
                 ev.prevent_default();
@@ -408,17 +396,9 @@ pub fn Puzzle(
                         on_puzzle_change,
                         on_error,
                     );
-                } else if let Some(poly) = st
-                    .provisional_cages
-                    .iter()
-                    .find(|p| p.cells().contains(&active_cell))
-                    .cloned()
-                {
-                    // Active cell is in a provisional cage — delete it.
-                    let mut new_st = st.clone();
-                    new_st.provisional_cages.remove(&poly);
-                    set_state(new_st);
-                } // else: uncovered cell — do nothing
+                } else {
+                    remove_provisional(&st, active_cell); // else: uncovered cell — does nothing
+                }
             }
             ENTER => {
                 ev.prevent_default();
@@ -443,18 +423,12 @@ pub fn Puzzle(
                 // With-Solution singleton: Given with a solution-derived target —
                 // commit immediately. Without-Solution singletons need a target
                 // chosen, so they fall through to the operation selector.
-                if st.solution.is_some() && operators(&poly) == [Operator::Given] {
-                    let parked: std::collections::BTreeSet<Polyomino> = st
-                        .provisional_cages
-                        .iter()
-                        .filter(|p| p.cells() != poly.cells())
-                        .cloned()
-                        .collect();
+                if st.solution.is_some() && operators_for(&poly) == [Operator::Given] {
                     commit_cage(
                         &poly,
                         Operator::Given,
                         None,
-                        parked,
+                        parked_cages(&st, &poly),
                         undo_stack,
                         redo_stack,
                         designer_state,
@@ -471,7 +445,7 @@ pub fn Puzzle(
             // cell coverage, and global feasibility) lives in the pure
             // `singleton_digit_commit` helper.
             key_str => {
-                if let Some(commit) = singleton_digit_commit(&st, key_str) {
+                if let Ok(Some(commit)) = singleton_digit_commit(&st, key_str) {
                     ev.prevent_default();
                     commit_cage(
                         &commit.poly,
@@ -514,28 +488,36 @@ pub fn Puzzle(
 
     // Gridlines.
     let mut lines = Vec::new();
+    let mut push_line = |x1: f64, y1: f64, x2: f64, y2: f64, thick: bool| {
+        let (stroke, width) = if thick { (INK, THICK) } else { (LINE, THIN) };
+        lines.push(view! {
+            <line x1=x1 y1=y1 x2=x2 y2=y2 stroke=stroke stroke-width=width stroke-linecap="round" />
+        });
+    };
     for r in 0..n.saturating_sub(1) {
         for c in 0..n {
-            let thick = is_thick(cage_index[r][c], cage_index[r + 1][c]);
-            let (stroke, width) = if thick { (INK, THICK) } else { (LINE, THIN) };
             let x1 = origin(cell, 0, c).0;
-            let x2 = x1 + cell;
             let y = origin(cell, r + 1, 0).1;
-            lines.push(view! {
-                <line x1=x1 y1=y x2=x2 y2=y stroke=stroke stroke-width=width stroke-linecap="round" />
-            });
+            push_line(
+                x1,
+                y,
+                x1 + cell,
+                y,
+                is_thick(cage_index[r][c], cage_index[r + 1][c]),
+            );
         }
     }
     for c in 0..n.saturating_sub(1) {
         for r in 0..n {
-            let thick = is_thick(cage_index[r][c], cage_index[r][c + 1]);
-            let (stroke, width) = if thick { (INK, THICK) } else { (LINE, THIN) };
             let x = origin(cell, 0, c + 1).0;
             let y1 = origin(cell, r, 0).1;
-            let y2 = y1 + cell;
-            lines.push(view! {
-                <line x1=x y1=y1 x2=x y2=y2 stroke=stroke stroke-width=width stroke-linecap="round" />
-            });
+            push_line(
+                x,
+                y1,
+                x,
+                y1 + cell,
+                is_thick(cage_index[r][c], cage_index[r][c + 1]),
+            );
         }
     }
 
@@ -640,6 +622,16 @@ type CageList = Vec<(Vec<Cell>, Cage)>;
 
 // ---- Helpers ----
 
+/// Returns all provisional cages in `state` except the one whose cells match `poly`.
+fn parked_cages(state: &State, poly: &Polyomino) -> std::collections::BTreeSet<Polyomino> {
+    state
+        .provisional_cages
+        .iter()
+        .filter(|p| p.cells() != poly.cells())
+        .cloned()
+        .collect()
+}
+
 /// A singleton `Given` cage to commit from a digit keypress, with the
 /// provisional cages to retain afterwards.
 struct SingletonDigitCommit {
@@ -664,11 +656,13 @@ struct SingletonDigitCommit {
 /// Feasibility uses the same [`crate::feasibility::is_globally_feasible`]
 /// predicate the value dropdown applies per target, so the digit shortcut and
 /// the dropdown always agree on which values are allowed.
-fn singleton_digit_commit(state: &State, key: &str) -> Option<SingletonDigitCommit> {
+fn singleton_digit_commit(state: &State, key: &str) -> Result<Option<SingletonDigitCommit>, Error> {
     if state.solution.is_some() || key.len() != 1 {
-        return None;
+        return Ok(None);
     }
-    let value = key.parse::<u8>().ok()?;
+    let Ok(value) = key.parse::<u8>() else {
+        return Ok(None);
+    };
     let active = state.active;
 
     // Covered by a committed cage → no shortcut.
@@ -677,7 +671,7 @@ fn singleton_digit_commit(state: &State, key: &str) -> Option<SingletonDigitComm
         .cages()
         .any(|cage| cage.cells().contains(&active))
     {
-        return None;
+        return Ok(None);
     }
     // Mid-draw inside a multi-cell provisional cage → no shortcut.
     if let Some(p) = state
@@ -686,14 +680,14 @@ fn singleton_digit_commit(state: &State, key: &str) -> Option<SingletonDigitComm
         .find(|p| p.cells().contains(&active))
         && p.len() > 1
     {
-        return None;
+        return Ok(None);
     }
 
-    let poly = Polyomino::from_cells(&[active]).ok()?;
+    let poly = Polyomino::from_cells(&[active])?;
     let target = Target::from(value);
-    let cage = Cage::new(poly.clone(), Operation::new(Operator::Given, target));
+    let cage = Cage::new(poly.clone(), Operation::new(Operator::Given, target))?;
     if !crate::feasibility::is_globally_feasible(&state.puzzle, &cage) {
-        return None;
+        return Ok(None);
     }
 
     // Drop a provisional singleton already at the cell (the commit replaces it);
@@ -704,11 +698,11 @@ fn singleton_digit_commit(state: &State, key: &str) -> Option<SingletonDigitComm
         .filter(|p| !p.cells().contains(&active))
         .cloned()
         .collect();
-    Some(SingletonDigitCommit {
+    Ok(Some(SingletonDigitCommit {
         poly,
         parked,
         target,
-    })
+    }))
 }
 
 /// Advances the provisional cage one step during Shift+Arrow drawing.
@@ -782,7 +776,7 @@ mod tests {
     }
 
     fn given_cage(r: usize, c: usize, target: u64) -> Cage {
-        Cage::new(poly(&[(r, c)]), Operation::new(Operator::Given, target))
+        Cage::new(poly(&[(r, c)]), Operation::new(Operator::Given, target)).unwrap()
     }
 
     #[test]
@@ -790,7 +784,7 @@ mod tests {
         let mut st = State::new(4).unwrap();
         st.active = Cell::new(1, 1);
         // 3 is feasible in an empty 4×4.
-        let commit = singleton_digit_commit(&st, "3").unwrap();
+        let commit = singleton_digit_commit(&st, "3").unwrap().unwrap();
         assert_eq!(commit.target, 3);
         assert_eq!(commit.poly.cells(), vec![Cell::new(1, 1)]);
         assert!(commit.parked.is_empty());
@@ -799,15 +793,15 @@ mod tests {
     #[test]
     fn digit_rejects_non_digit_and_multichar_keys() {
         let st = State::new(4).unwrap();
-        assert!(singleton_digit_commit(&st, "Enter").is_none());
-        assert!(singleton_digit_commit(&st, "a").is_none());
+        assert!(singleton_digit_commit(&st, "Enter").unwrap().is_none());
+        assert!(singleton_digit_commit(&st, "a").unwrap().is_none());
     }
 
     #[test]
     fn digit_rejected_in_with_solution_mode() {
         let mut st = State::new_with_solution(4).unwrap();
         st.active = Cell::new(0, 0);
-        assert!(singleton_digit_commit(&st, "1").is_none());
+        assert!(singleton_digit_commit(&st, "1").unwrap().is_none());
     }
 
     #[test]
@@ -815,7 +809,7 @@ mod tests {
         let mut st = State::new(4).unwrap();
         st.active = Cell::new(0, 0);
         // 9 can never appear in a 4×4 grid.
-        assert!(singleton_digit_commit(&st, "9").is_none());
+        assert!(singleton_digit_commit(&st, "9").unwrap().is_none());
     }
 
     #[test]
@@ -823,7 +817,7 @@ mod tests {
         let mut st = State::new(4).unwrap();
         st.puzzle = st.puzzle.insert_cage(given_cage(0, 0, 2)).unwrap();
         st.active = Cell::new(0, 0);
-        assert!(singleton_digit_commit(&st, "3").is_none());
+        assert!(singleton_digit_commit(&st, "3").unwrap().is_none());
     }
 
     #[test]
@@ -831,7 +825,7 @@ mod tests {
         let mut st = State::new(4).unwrap();
         assert!(st.provisional_cages.insert(poly(&[(0, 0), (0, 1)])));
         st.active = Cell::new(0, 0);
-        assert!(singleton_digit_commit(&st, "3").is_none());
+        assert!(singleton_digit_commit(&st, "3").unwrap().is_none());
     }
 
     #[test]
@@ -844,7 +838,7 @@ mod tests {
         st.active = Cell::new(2, 2);
 
         // 1 is feasible in an empty 4×4.
-        let commit = singleton_digit_commit(&st, "1").unwrap();
+        let commit = singleton_digit_commit(&st, "1").unwrap().unwrap();
         assert_eq!(commit.target, 1);
         assert_eq!(commit.parked.len(), 1);
         assert!(

@@ -1,25 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { installTauriStubs, gotoApp } from './helpers';
-
-// A 3×3 puzzle with two cages; the remaining cells are uncovered.
-// Cage 0: cells (0,0),(0,1) — Add 3
-// Cage 1: cell  (0,2)       — Given 3
-const PUZZLE_3 = {
-  n: 3,
-  cages: [
-    {
-      polyomino: [
-        { row: 0, column: 0 },
-        { row: 0, column: 1 },
-      ],
-      operation: { operator: 'Add', target: 3 },
-    },
-    {
-      polyomino: [{ row: 0, column: 2 }],
-      operation: { operator: 'Given', target: 3 },
-    },
-  ],
-};
+import { installTauriStubs, gotoApp, PUZZLE_3 } from './helpers';
 
 test.describe('grid rendering', () => {
   test('grid SVG is present', async ({ page }) => {

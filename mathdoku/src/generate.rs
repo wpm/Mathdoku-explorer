@@ -144,7 +144,7 @@ where
             .map(|cell| latin_square[cell.row][cell.column])
             .collect();
         let operation = op(&values, n)?;
-        let cage = Cage::new(polyomino, operation);
+        let cage = Cage::new(polyomino, operation)?;
         puzzle = puzzle.insert_cage(cage)?;
     }
     Ok(puzzle)

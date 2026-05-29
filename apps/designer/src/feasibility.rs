@@ -20,7 +20,9 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
 
-use mathdoku::{Cage, Cell, Grid, Operation, Operator, Polyomino, Puzzle, Target, operators};
+use mathdoku::{
+    Cage, Cell, Error, Grid, Operation, Operator, Polyomino, Puzzle, Target, operators_for,
+};
 
 /// Products above this ceiling are never offered as `Multiply` targets. No
 /// realistic cage in an `n ≤ 9` grid has a larger product, and the bound keeps
@@ -48,24 +50,29 @@ pub fn is_globally_feasible(puzzle: &Puzzle, candidate: &Cage) -> bool {
 /// Enumerates all globally-feasible `(operator, target)` pairs for `polyomino`
 /// against the current `puzzle`.
 ///
-/// Per-pair strategy (see issue #25): for each operator valid for the cage's
-/// size, every candidate target is tested with [`is_globally_feasible`]. The
-/// candidate targets are a tight superset derived by reachability, so the only
-/// pairs returned are the ones that actually admit a completion.
-#[must_use]
-pub fn feasible_op_targets(puzzle: &Puzzle, polyomino: &Polyomino) -> Vec<(Operator, Target)> {
+/// For each operator valid for the cage's size, every candidate target is tested
+/// with [`is_globally_feasible`]. The candidate targets are a tight superset
+/// derived by reachability, so the only pairs returned are the ones that
+/// actually admit a completion.
+///
+/// # Errors
+/// Returns [`Error`] if constructing a candidate cage fails.
+pub fn feasible_op_targets(
+    puzzle: &Puzzle,
+    polyomino: &Polyomino,
+) -> Result<Vec<(Operator, Target)>, Error> {
     let n = puzzle.n();
     let k = polyomino.len();
     let mut out = Vec::new();
-    for op in operators(polyomino) {
+    for op in operators_for(polyomino) {
         for target in candidate_targets(&op, k, n) {
-            let cage = Cage::new(polyomino.clone(), Operation::new(op.clone(), target));
+            let cage = Cage::new(polyomino.clone(), Operation::new(op.clone(), target))?;
             if is_globally_feasible(puzzle, &cage) {
                 out.push((op.clone(), target));
             }
         }
     }
-    out
+    Ok(out)
 }
 
 /// Candidate targets to test for `op` on a `k`-cell cage in an `n×n` grid.
@@ -144,25 +151,27 @@ fn puzzle_key(puzzle: &Puzzle) -> u64 {
 
 /// Memoized [`feasible_op_targets`]. Returns the cached result for the
 /// `(puzzle, polyomino)` pair if present, otherwise computes and stores it.
-#[must_use]
+///
+/// # Errors
+/// Returns [`Error`] if constructing a candidate cage fails.
 pub fn cached_feasible_op_targets(
     puzzle: &Puzzle,
     polyomino: &Polyomino,
-) -> Vec<(Operator, Target)> {
+) -> Result<Vec<(Operator, Target)>, Error> {
     let key = (puzzle_key(puzzle), polyomino.cells());
     if let Some(hit) = CACHE.with_borrow(|c| c.get(&key).cloned()) {
-        return hit;
+        return Ok(hit);
     }
-    let result = feasible_op_targets(puzzle, polyomino);
+    let result = feasible_op_targets(puzzle, polyomino)?;
     CACHE.with_borrow_mut(|c| {
         let _ = c.insert(key, result.clone());
     });
-    result
+    Ok(result)
 }
 
 /// Groups feasible `(operator, target)` pairs by operator.
 ///
-/// The operator order of [`operators`] is preserved. Used by the
+/// The operator order of [`operators_for`] is preserved. Used by the
 /// Without-Solution two-step picker: the operator strip shows the keys, and
 /// clicking one reveals its targets.
 #[must_use]
@@ -193,7 +202,7 @@ mod tests {
     }
 
     fn cage(positions: &[(usize, usize)], op: Operator, target: u64) -> Cage {
-        Cage::new(poly(positions), Operation::new(op, target))
+        Cage::new(poly(positions), Operation::new(op, target)).unwrap()
     }
 
     #[test]
@@ -230,7 +239,7 @@ mod tests {
     #[test]
     fn given_singleton_offers_every_value_in_an_empty_grid() {
         let puzzle = Puzzle::new(4).unwrap();
-        let pairs = feasible_op_targets(&puzzle, &poly(&[(1, 1)]));
+        let pairs = feasible_op_targets(&puzzle, &poly(&[(1, 1)])).unwrap();
         // A single cell in an empty 4×4 can hold any of 1..=4.
         let targets: Vec<u64> = pairs.iter().map(|&(_, t)| t).collect();
         assert_eq!(targets, vec![1, 2, 3, 4]);
@@ -241,7 +250,7 @@ mod tests {
     fn row_triple_in_3x3_only_admits_sum_and_product_six() {
         // A full row of a 3×3 must be a permutation of {1,2,3}: sum 6, product 6.
         let puzzle = Puzzle::new(3).unwrap();
-        let pairs = feasible_op_targets(&puzzle, &poly(&[(0, 0), (0, 1), (0, 2)]));
+        let pairs = feasible_op_targets(&puzzle, &poly(&[(0, 0), (0, 1), (0, 2)])).unwrap();
         assert!(pairs.contains(&(Operator::Add, 6)));
         assert!(pairs.contains(&(Operator::Multiply, 6)));
         // No other Add/Multiply targets are reachable.
@@ -257,10 +266,10 @@ mod tests {
     fn every_returned_pair_is_individually_feasible() {
         let puzzle = Puzzle::new(4).unwrap();
         let p = poly(&[(0, 0), (0, 1)]);
-        for (op, target) in feasible_op_targets(&puzzle, &p) {
+        for (op, target) in feasible_op_targets(&puzzle, &p).unwrap() {
             assert!(is_globally_feasible(
                 &puzzle,
-                &Cage::new(p.clone(), Operation::new(op, target))
+                &Cage::new(p.clone(), Operation::new(op, target)).unwrap()
             ));
         }
     }
@@ -277,9 +286,9 @@ mod tests {
     fn cache_returns_same_result_as_direct_call() {
         let puzzle = Puzzle::new(4).unwrap();
         let p = poly(&[(2, 2), (2, 3)]);
-        let direct = feasible_op_targets(&puzzle, &p);
-        let cached_once = cached_feasible_op_targets(&puzzle, &p);
-        let cached_twice = cached_feasible_op_targets(&puzzle, &p);
+        let direct = feasible_op_targets(&puzzle, &p).unwrap();
+        let cached_once = cached_feasible_op_targets(&puzzle, &p).unwrap();
+        let cached_twice = cached_feasible_op_targets(&puzzle, &p).unwrap();
         assert_eq!(direct, cached_once);
         assert_eq!(cached_once, cached_twice);
     }

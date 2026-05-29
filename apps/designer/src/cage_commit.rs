@@ -11,6 +11,27 @@ use mathdoku_designer_core::State;
 
 use crate::ipc;
 
+/// Applies a successful IPC result to the designer state.
+///
+/// `parked` overrides the provisional cages in `new_st`; if `None`, the
+/// pre-operation cages are preserved unchanged.
+fn apply_ipc_result(
+    mut new_st: State,
+    parked: Option<BTreeSet<Polyomino>>,
+    undo_stack: RwSignal<Vec<State>>,
+    redo_stack: RwSignal<Vec<State>>,
+    designer_state: RwSignal<State>,
+    on_puzzle_change: Callback<State>,
+) {
+    let pre = designer_state.get_untracked();
+    new_st.provisional_cages = parked.unwrap_or_else(|| pre.provisional_cages.clone());
+    new_st.active = pre.active;
+    undo_stack.update(|s| s.push(pre));
+    redo_stack.update(Vec::clear);
+    designer_state.set(new_st.clone());
+    on_puzzle_change.run(new_st);
+}
+
 /// Commits `polyomino` as a new cage via the `insert_cage` Tauri command.
 ///
 /// `target` is `None` in With-Solution mode (the backend derives the target
@@ -33,21 +54,21 @@ pub fn commit_cage(
 ) {
     let cells = polyomino.cells();
     spawn_local(async move {
-        let mut new_st = match ipc::insert_cage(cells, operator, target).await {
+        let new_st = match ipc::insert_cage(cells, operator, target).await {
             Ok(st) => st,
             Err(e) => {
                 on_error.run(e.to_string());
                 return;
             }
         };
-        let pre_commit = designer_state.get_untracked();
-        // Restore parked provisional cages and active cell into the new state.
-        new_st.provisional_cages = parked;
-        new_st.active = pre_commit.active;
-        undo_stack.update(|s| s.push(pre_commit));
-        redo_stack.update(std::vec::Vec::clear);
-        designer_state.set(new_st.clone());
-        on_puzzle_change.run(new_st);
+        apply_ipc_result(
+            new_st,
+            Some(parked),
+            undo_stack,
+            redo_stack,
+            designer_state,
+            on_puzzle_change,
+        );
     });
 }
 
@@ -67,22 +88,21 @@ pub fn delete_cage(
     on_error: Callback<String>,
 ) {
     spawn_local(async move {
-        let mut new_st = match ipc::remove_cage(cells).await {
+        let new_st = match ipc::remove_cage(cells).await {
             Ok(st) => st,
             Err(e) => {
                 on_error.run(e.to_string());
                 return;
             }
         };
-        let pre_delete = designer_state.get_untracked();
-        new_st
-            .provisional_cages
-            .clone_from(&pre_delete.provisional_cages);
-        new_st.active = pre_delete.active;
-        undo_stack.update(|s| s.push(pre_delete));
-        redo_stack.update(std::vec::Vec::clear);
-        designer_state.set(new_st.clone());
-        on_puzzle_change.run(new_st);
+        apply_ipc_result(
+            new_st,
+            None,
+            undo_stack,
+            redo_stack,
+            designer_state,
+            on_puzzle_change,
+        );
     });
 }
 
@@ -102,28 +122,27 @@ pub fn demote_cage(
     on_error: Callback<String>,
 ) {
     spawn_local(async move {
-        let mut new_st = match ipc::remove_cage(cells.clone()).await {
+        let new_st = match ipc::remove_cage(cells.clone()).await {
             Ok(st) => st,
             Err(e) => {
                 on_error.run(e.to_string());
                 return;
             }
         };
-        let pre_demote = designer_state.get_untracked();
-        // Add the demoted cage as a provisional cage in the new state.
         let Ok(poly) = Polyomino::from_cells(&cells) else {
             on_error.run("invalid polyomino".into());
             return;
         };
-        new_st
-            .provisional_cages
-            .clone_from(&pre_demote.provisional_cages);
-        new_st.provisional_cages.insert(poly.clone());
-        new_st.active = pre_demote.active;
-        undo_stack.update(|s| s.push(pre_demote));
-        redo_stack.update(std::vec::Vec::clear);
-        designer_state.set(new_st.clone());
-        on_puzzle_change.run(new_st);
+        let mut parked = designer_state.get_untracked().provisional_cages;
+        parked.insert(poly.clone());
+        apply_ipc_result(
+            new_st,
+            Some(parked),
+            undo_stack,
+            redo_stack,
+            designer_state,
+            on_puzzle_change,
+        );
         on_open_selector.run(poly);
     });
 }

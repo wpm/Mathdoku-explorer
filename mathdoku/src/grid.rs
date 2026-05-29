@@ -2,6 +2,7 @@
 
 use serde::de::Error as DeError;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use std::fmt::{Display, Formatter};
 
 use crate::Error::InvalidGridSize;
 use crate::cage::Cage;
@@ -281,6 +282,11 @@ impl<'de> Deserialize<'de> for Grid {
         Ok(Self { n, values })
     }
 }
+impl Display for Grid {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}×{} grid", self.n, self.n)
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -296,7 +302,7 @@ mod tests {
     fn cage_at(positions: &[(usize, usize)], operator: Operator, target: Target) -> Cage {
         let cells: Vec<Cell> = positions.iter().map(|&(r, c)| Cell::new(r, c)).collect();
         let poly = Polyomino::from_cells(&cells).unwrap();
-        Cage::new(poly, Operation::new(operator, target))
+        Cage::new(poly, Operation::new(operator, target)).unwrap()
     }
 
     fn puzzle_with_cage(
@@ -745,6 +751,11 @@ mod tests {
             let sum: Target = t.iter().map(|&v| Target::from(v)).sum();
             assert_eq!(sum, 3);
         }
+    }
+
+    #[test]
+    fn display_shows_dimensions() {
+        assert_eq!(Grid::new(4).unwrap().to_string(), "4×4 grid");
     }
 
     #[test]

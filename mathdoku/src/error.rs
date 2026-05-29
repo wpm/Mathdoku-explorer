@@ -11,6 +11,7 @@ use crate::cage::Cage;
 use crate::cell::Cell;
 use crate::operation::{Operation, Operator};
 use crate::polyomino::Polyomino;
+use crate::{Grid, Puzzle};
 
 /// Errors that can occur during puzzle construction or solving.
 #[derive(Debug)]
@@ -56,6 +57,8 @@ pub enum Error {
     InvalidTupleIndex(usize, usize),
     /// A value passed to `Values::new` is outside the valid range `1..=9`.
     InvalidValue(crate::cell::Value),
+    /// The grid and puzzle dimensions do not match.
+    GridPuzzleMismatch(Box<Grid>, Box<Puzzle>),
 }
 
 impl fmt::Display for Error {
@@ -130,6 +133,9 @@ impl fmt::Display for Error {
                 "{operator} cannot be applied to a tuple of arity {arity}"
             ),
             Self::InvalidValue(v) => write!(f, "value {v} is outside the valid range 1..=9"),
+            Self::GridPuzzleMismatch(grid, puzzle) => {
+                write!(f, "{grid} and {puzzle} are different sizes")
+            }
         }
     }
 }
@@ -191,7 +197,7 @@ mod tests {
             "tuple operation cannot be applied to an empty tuple"
         );
         let poly = Polyomino::from_cells(&[Cell::new(0, 0)]).unwrap();
-        let cage = Cage::new(poly, Operation::new(Operator::Given, 1));
+        let cage = Cage::new(poly, Operation::new(Operator::Given, 1)).unwrap();
         assert!(
             Error::InvalidCage(cage)
                 .to_string()

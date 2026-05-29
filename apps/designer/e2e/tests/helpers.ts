@@ -35,7 +35,13 @@ export async function installTauriStubs(
   const withoutSolution = opts.withoutSolution ?? false;
 
   await page.addInitScript(
-    ({ puzzle, saveDialogPath, openDialogPath, savedPath, withoutSolution }) => {
+    ({
+      puzzle,
+      saveDialogPath,
+      openDialogPath,
+      savedPath,
+      withoutSolution,
+    }) => {
       let currentPath: string | null = savedPath;
       // Mode flag: With-Solution serializes a non-null `solution`, Without-Solution null.
       let hasSolution = !withoutSolution;
@@ -58,7 +64,8 @@ export async function installTauriStubs(
       (window as unknown as Record<string, unknown>)['__TAURI__'] = {
         core: {
           invoke: (cmd: string, args?: unknown) => {
-            if (cmd === 'get_puzzle') return Promise.resolve(wrapState(puzzle as BareP));
+            if (cmd === 'get_puzzle')
+              return Promise.resolve(wrapState(puzzle as BareP));
             if (cmd === 'get_doc_state')
               return Promise.resolve({ dirty: false, path: currentPath });
             if (cmd === 'new_empty' || cmd === 'new_latin_square') {
@@ -82,28 +89,47 @@ export async function installTauriStubs(
               return Promise.resolve({ path });
             }
             if (cmd === 'set_window_title') {
-              const title =
+              document.title =
                 (args as { title?: string } | undefined)?.title ?? '';
-              document.title = title;
               return Promise.resolve(null);
             }
             if (cmd === 'remove_cage') {
-              const typedArgs = args as { cells?: { row: number; column: number }[] } | undefined;
+              const typedArgs = args as
+                | { cells?: { row: number; column: number }[] }
+                | undefined;
               const removeCells = typedArgs?.cells ?? [];
               const currentPuzzle = puzzle as BareP;
               if (!currentPuzzle) return Promise.resolve(null);
-              const removeSet = new Set(removeCells.map(({ row, column }) => `${row},${column}`));
-              const cages = (currentPuzzle.cages ?? []).filter((cage: unknown) => {
-                const c = cage as { polyomino?: { row: number; column: number }[] };
-                const cageSet = new Set((c.polyomino ?? []).map(({ row, column }) => `${row},${column}`));
-                return !(removeCells.length === cageSet.size && removeCells.every(({ row, column }) => cageSet.has(`${row},${column}`)));
-              });
+              const cages = (currentPuzzle.cages ?? []).filter(
+                (cage: unknown) => {
+                  const c = cage as {
+                    polyomino?: { row: number; column: number }[];
+                  };
+                  const cageSet = new Set(
+                    (c.polyomino ?? []).map(
+                      ({ row, column }) => `${row},${column}`,
+                    ),
+                  );
+                  return !(
+                    removeCells.length === cageSet.size &&
+                    removeCells.every(({ row, column }) =>
+                      cageSet.has(`${row},${column}`),
+                    )
+                  );
+                },
+              );
               puzzle = { n: currentPuzzle.n, cages };
               return Promise.resolve(wrapState(puzzle as BareP));
             }
             if (cmd === 'insert_cage') {
               // Add the cells as a new cage and return a State.
-              const typedArgs = args as { cells?: { row: number; column: number }[]; operator?: string; target?: number | null } | undefined;
+              const typedArgs = args as
+                | {
+                    cells?: { row: number; column: number }[];
+                    operator?: string;
+                    target?: number | null;
+                  }
+                | undefined;
               const cells = typedArgs?.cells ?? [];
               const operator = typedArgs?.operator ?? 'Given';
               const currentPuzzle = puzzle as BareP;
@@ -133,6 +159,58 @@ export async function installTauriStubs(
     },
     { puzzle, saveDialogPath, openDialogPath, savedPath, withoutSolution },
   );
+}
+
+// A 3×3 puzzle with two cages used across multiple test suites.
+// Cage 0: cells (0,0),(0,1) — Add(3)
+// Cage 1: cell  (0,2)       — Given(3)
+export const PUZZLE_3 = {
+  n: 3,
+  cages: [
+    {
+      polyomino: [
+        { row: 0, column: 0 },
+        { row: 0, column: 1 },
+      ],
+      operation: { operator: 'Add', target: 3 },
+    },
+    {
+      polyomino: [{ row: 0, column: 2 }],
+      operation: { operator: 'Given', target: 3 },
+    },
+  ],
+};
+
+// Intercepts window.__TAURI__.core.invoke and records all calls to `commandName`
+// into a page-global array at `window[arrayKey]`. Returns the array key.
+export async function interceptInvokeCommand(
+  page: Page,
+  commandName: string,
+  arrayKey = '__intercepted_calls__',
+): Promise<string> {
+  await page.addInitScript(
+    ({ commandName, arrayKey }) => {
+      (window as unknown as Record<string, unknown[]>)[arrayKey] = [];
+      const tauri = (
+        window as unknown as {
+          __TAURI__: {
+            core: { invoke: (cmd: string, args?: unknown) => Promise<unknown> };
+          };
+        }
+      ).__TAURI__;
+      const orig = tauri.core.invoke;
+      tauri.core.invoke = (cmd, args) => {
+        if (cmd === commandName) {
+          (window as unknown as Record<string, unknown[]>)[arrayKey].push(
+            args,
+          );
+        }
+        return orig(cmd, args);
+      };
+    },
+    { commandName, arrayKey },
+  );
+  return arrayKey;
 }
 
 // Navigate to the app and wait for the WASM to mount.

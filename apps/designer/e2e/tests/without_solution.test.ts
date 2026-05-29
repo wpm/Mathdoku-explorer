@@ -2,6 +2,13 @@ import { test, expect, type Page } from '@playwright/test';
 import { installTauriStubs, gotoApp, waitForGrid } from './helpers';
 import { ENTER, SHIFT_ARROW_RIGHT } from './keys';
 
+async function setup(page: Page) {
+  await installTauriStubs(page, { n: 3 }, { withoutSolution: true });
+  await gotoApp(page);
+  await waitForGrid(page);
+  await page.locator('.grid-svg').focus();
+}
+
 const fixButton = (page: Page) =>
   page.getByRole('button', { name: 'Fix Solution', exact: true });
 const unfixButton = (page: Page) =>
@@ -113,10 +120,7 @@ test.describe('Without-Solution cage commit', () => {
   test('two-step picker commits a cage with an author-chosen target', async ({
     page,
   }) => {
-    await installTauriStubs(page, { n: 3 }, { withoutSolution: true });
-    await gotoApp(page);
-    await waitForGrid(page);
-    await page.locator('.grid-svg').focus();
+    await setup(page);
 
     // Draw the pair {(0,0),(0,1)} and open the operation selector.
     await page.keyboard.press(SHIFT_ARROW_RIGHT);
@@ -145,10 +149,7 @@ test.describe('Without-Solution cage commit', () => {
   test('target dropdown is selectable from the keyboard by typing the number', async ({
     page,
   }) => {
-    await installTauriStubs(page, { n: 3 }, { withoutSolution: true });
-    await gotoApp(page);
-    await waitForGrid(page);
-    await page.locator('.grid-svg').focus();
+    await setup(page);
 
     // Draw {(0,0),(0,1)}, open the selector, and choose the Add operator.
     await page.keyboard.press(SHIFT_ARROW_RIGHT);
@@ -170,10 +171,7 @@ test.describe('Without-Solution singleton cages', () => {
   test('typing a permitted digit immediately creates a singleton cage', async ({
     page,
   }) => {
-    await installTauriStubs(page, { n: 3 }, { withoutSolution: true });
-    await gotoApp(page);
-    await waitForGrid(page);
-    await page.locator('.grid-svg').focus();
+    await setup(page);
 
     // The active cell starts at (0,0); 2 is a permitted value in an empty 3×3.
     await page.keyboard.press('2');
@@ -186,10 +184,7 @@ test.describe('Without-Solution singleton cages', () => {
   test('singleton picker opens on the value dropdown, skipping the operator step', async ({
     page,
   }) => {
-    await installTauriStubs(page, { n: 3 }, { withoutSolution: true });
-    await gotoApp(page);
-    await waitForGrid(page);
-    await page.locator('.grid-svg').focus();
+    await setup(page);
 
     // Enter on the empty active cell opens the singleton picker directly on the
     // native value dropdown.

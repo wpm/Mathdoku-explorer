@@ -9,7 +9,7 @@
 //! | Constraint  | [`Cage`] — arithmetic target over a polyomino of cells |
 //! | State       | [`Grid`] — holds one [`Values`] set per cell |
 //!
-//! [`crate::csp::generalized_arc_consistency`] drives solving: it maintains a worklist
+//! [`generalized_arc_consistency`] drives solving: it maintains a worklist
 //! of constraints and propagates each in turn, re-queuing constraints adjacent to any
 //! cell whose values shrink, until no constraint can narrow any cell's values further.
 //!
@@ -18,6 +18,7 @@
 
 use std::sync::Arc;
 
+use crate::Error::GridPuzzleMismatch;
 use crate::cage::Cage;
 use crate::csp::{Constraint, Variable, generalized_arc_consistency};
 use crate::grid::Grid;
@@ -178,13 +179,17 @@ fn propagate_cage(
 /// [`Cage`] constraint per cage — then runs [`generalized_arc_consistency`] to a fixpoint.
 ///
 /// # Errors
-/// Returns an error if any cell is out of bounds during propagation.
-// Explicit `pub(crate)` marks the crate-internal API surface; the lint sees it as
-// redundant because `grid_csp` is a private module.
-#[allow(clippy::redundant_pub_crate)]
-pub(crate) fn grid_fixpoint(grid: &Grid, puzzle: &Puzzle) -> Result<Grid, Error> {
+/// Returns an error if any cell is out of bounds during propagation or the grid and puzzle
+/// are not the same size.
+pub fn grid_fixpoint(grid: &Grid, puzzle: &Puzzle) -> Result<Grid, Error> {
+    if grid.n() != puzzle.n() {
+        return Err(GridPuzzleMismatch(
+            Box::new(grid.clone()),
+            Box::new(puzzle.clone()),
+        ));
+    }
     let n = grid.n();
-    let cages: Arc<Vec<Cage>> = Arc::new(puzzle.cages().cloned().collect());
+    let cages: Arc<Vec<_>> = Arc::new(puzzle.cages().cloned().collect());
     let rows =
         (0..n).map(|r| PuzzleConstraint::AllDifferent(AllDifferent::row(n, r, Arc::clone(&cages))));
     let cols = (0..n)
@@ -193,7 +198,7 @@ pub(crate) fn grid_fixpoint(grid: &Grid, puzzle: &Puzzle) -> Result<Grid, Error>
         .cages()
         .cloned()
         .map(|cage| PuzzleConstraint::Cage(cage, Arc::clone(&cages)));
-    let constraints: Vec<PuzzleConstraint> = rows.chain(cols).chain(cage_constraints).collect();
+    let constraints: Vec<_> = rows.chain(cols).chain(cage_constraints).collect();
     generalized_arc_consistency(grid.clone(), &constraints)
 }
 
@@ -416,6 +421,7 @@ mod tests {
             Polyomino::from_cells(&cells).unwrap(),
             Operation::new(operator, target),
         )
+        .unwrap()
     }
 
     #[test]

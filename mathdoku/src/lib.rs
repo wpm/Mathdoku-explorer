@@ -17,7 +17,7 @@
 //! - **Construct** a puzzle programmatically with [`Puzzle::new`] and [`Puzzle::insert_cage`].
 //! - **Inspect** cell values with [`Grid::cell_values`].
 //! - **Solve** with [`Grid::solutions`].
-//! - **Query valid operators** for a polyomino with [`operators`].
+//! - **Query valid operators** for a polyomino with [`operators_for`].
 //!
 //! ## Architecture
 //!
@@ -58,6 +58,6 @@ pub use error::Error;
 pub use generate::generate;
 pub use grid::Grid;
 pub use latin_square::generate_latin_square;
-pub use operation::{Operation, Operator, operators};
+pub use operation::{Operation, Operator, operators_for};
 pub use polyomino::Polyomino;
 pub use puzzle::Puzzle;

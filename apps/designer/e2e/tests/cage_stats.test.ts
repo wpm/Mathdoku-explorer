@@ -1,26 +1,6 @@
 import { test, expect } from '@playwright/test';
-import { installTauriStubs, gotoApp, waitForGrid } from './helpers';
+import { installTauriStubs, gotoApp, waitForGrid, PUZZLE_3 } from './helpers';
 import { ARROW_DOWN, TAB } from './keys';
-
-// 3×3 puzzle: two cages.
-// Cage 0: cells (0,0),(0,1) — horizontal domino, Add(3) → 2 Tuples, 1 Multiset
-// Cage 1: cell  (0,2)       — singleton, Given(3)      → 1 Tuple,  1 Multiset
-const PUZZLE_3 = {
-  n: 3,
-  cages: [
-    {
-      polyomino: [
-        { row: 0, column: 0 },
-        { row: 0, column: 1 },
-      ],
-      operation: { operator: 'Add', target: 3 },
-    },
-    {
-      polyomino: [{ row: 0, column: 2 }],
-      operation: { operator: 'Given', target: 3 },
-    },
-  ],
-};
 
 test.describe('cage stats', () => {
   test('no stats shown when active cell is not in any cage', async ({

@@ -239,6 +239,17 @@ pub(crate) fn constrain_current(
 
 // ---- puzzle-mutation command bodies ----
 
+/// Stores `new_puzzle` and its re-constrained grid into `state`, marks dirty,
+/// and returns the updated designer state. Shared tail of `insert_cage` and
+/// `remove_cage`.
+fn commit_puzzle(state: &mut AppState, new_puzzle: Puzzle) -> Result<State, Error> {
+    let new_current = constrain_current(state.solution.as_ref(), &new_puzzle)?;
+    state.puzzle = Some(new_puzzle);
+    state.current = Some(new_current);
+    state.dirty = true;
+    state.to_designer_state().ok_or(Error::NoPuzzle)
+}
+
 /// Creates a new empty *n*×*n* Without-Solution puzzle with no cages and no
 /// Latin-square solution.
 ///
@@ -331,13 +342,9 @@ pub fn insert_cage(
     });
     let operation = Operation::new(operator, target);
 
-    let cage = Cage::new(poly, operation);
+    let cage = Cage::new(poly, operation)?;
     let new_puzzle = puzzle.insert_cage(cage)?;
-    let new_current = constrain_current(state.solution.as_ref(), &new_puzzle)?;
-    state.puzzle = Some(new_puzzle);
-    state.current = Some(new_current);
-    state.dirty = true;
-    state.to_designer_state().ok_or(Error::NoPuzzle)
+    commit_puzzle(state, new_puzzle)
 }
 
 /// Removes the cage whose cell set matches `cells` from the current puzzle.
@@ -365,11 +372,7 @@ pub fn remove_cage(state: &mut AppState, cells: &[Cell]) -> Result<State, Error>
     let new_puzzle = remaining_cages
         .into_iter()
         .try_fold(Puzzle::new(n)?, |p, cage| p.insert_cage(cage))?;
-    let new_current = constrain_current(state.solution.as_ref(), &new_puzzle)?;
-    state.puzzle = Some(new_puzzle);
-    state.current = Some(new_current);
-    state.dirty = true;
-    state.to_designer_state().ok_or(Error::NoPuzzle)
+    commit_puzzle(state, new_puzzle)
 }
 
 /// Switches the current puzzle from Without-Solution to With-Solution by
@@ -480,14 +483,14 @@ mod tests {
 
     /// Shared fixtures.
     mod helpers {
-        use crate::{AppState, State, new_empty};
+        use crate::{AppState, State, apply_loaded, insert_cage, new_empty, serialize_save};
         use mathdoku::{Cage, Cell, Grid, Operation, Operator, Polyomino, Puzzle};
 
         /// Builds a [`Cage`] from `(row, column)` positions, an operator, and a target.
         pub(super) fn cage_at(positions: &[(usize, usize)], op: Operator, target: u64) -> Cage {
             let cells: Vec<Cell> = positions.iter().map(|&(r, c)| Cell::new(r, c)).collect();
             let poly = Polyomino::from_cells(&cells).unwrap();
-            Cage::new(poly, Operation::new(op, target))
+            Cage::new(poly, Operation::new(op, target)).unwrap()
         }
 
         /// Builds [`Cell`]s from `(row, column)` positions.
@@ -551,6 +554,29 @@ mod tests {
             let mut state = AppState::default();
             let _ = new_empty(&mut state, n).unwrap();
             state
+        }
+
+        /// A 3×3 [`AppState`] pinned to the same Latin square as [`unique_3x3`]
+        /// by nine `Given` cages — exactly one completion.
+        pub(super) fn unique_3x3_app_state() -> AppState {
+            let mut state = AppState::default();
+            let _ = new_empty(&mut state, 3).unwrap();
+            let square = [[1u64, 2, 3], [2, 3, 1], [3, 1, 2]];
+            for (r, row) in square.iter().enumerate() {
+                for (c, &v) in row.iter().enumerate() {
+                    let _ = insert_cage(&mut state, &cells(&[(r, c)]), Operator::Given, Some(v))
+                        .unwrap();
+                }
+            }
+            state
+        }
+
+        /// Serializes `source`, loads it into a fresh state, and returns the loaded state.
+        pub(super) fn save_round_trip(source: &AppState) -> AppState {
+            let json = serialize_save(source).unwrap();
+            let mut loaded = AppState::default();
+            let _ = apply_loaded(&mut loaded, &json).unwrap();
+            loaded
         }
     }
 
@@ -705,29 +731,25 @@ mod tests {
         }
 
         #[test]
-        fn insert_cage_subtract_on_three_cells_currently_succeeds() {
-            // TODO(#68): #55 expects Err(InvalidOperationArity). insert_cage does
-            // no arity validation: the cage is committed and the three cells
-            // collapse to empty domains. Asserting current behaviour.
+        fn insert_cage_subtract_on_three_cells_returns_err() {
             let mut state = AppState::default();
             let _ = new_empty(&mut state, 4).unwrap();
             let region = cells(&[(0, 0), (0, 1), (0, 2)]);
-            let st = insert_cage(&mut state, &region, Operator::Subtract, Some(1)).unwrap();
-            for &cell in &region {
-                assert!(st.current.cell_values(cell).unwrap().is_empty());
-            }
+            assert!(matches!(
+                insert_cage(&mut state, &region, Operator::Subtract, Some(1)),
+                Err(Error::Mathdoku(mathdoku::Error::InfeasibleOperation(_, _)))
+            ));
         }
 
         #[test]
-        fn insert_cage_given_on_two_cells_currently_succeeds() {
-            // TODO(#68): #55 expects an arity error; insert_cage commits the cage
-            // and both cells collapse to empty domains instead.
+        fn insert_cage_given_on_two_cells_returns_err() {
             let mut state = AppState::default();
             let _ = new_empty(&mut state, 4).unwrap();
             let region = cells(&[(0, 0), (0, 1)]);
-            let st = insert_cage(&mut state, &region, Operator::Given, Some(2)).unwrap();
-            assert!(st.current.cell_values(region[0]).unwrap().is_empty());
-            assert!(st.current.cell_values(region[1]).unwrap().is_empty());
+            assert!(matches!(
+                insert_cage(&mut state, &region, Operator::Given, Some(2)),
+                Err(Error::Mathdoku(mathdoku::Error::InfeasibleOperation(_, _)))
+            ));
         }
 
         #[test]
@@ -977,7 +999,7 @@ mod tests {
     // ---- Category 2: state invariants after each command ----
 
     mod invariants {
-        use super::helpers::{all_cells, cells, with_solution_3x3};
+        use super::helpers::{all_cells, cells, unique_3x3_app_state, with_solution_3x3};
         use crate::{AppState, fix, insert_cage, new_empty, new_latin_square, remove_cage, unfix};
         use mathdoku::{Cell, Grid, Values};
         use rand::{SeedableRng, rngs::StdRng};
@@ -1096,20 +1118,7 @@ mod tests {
 
         #[test]
         fn fix_sets_solution_leaves_puzzle_and_current() {
-            let mut state = AppState::default();
-            let _ = new_empty(&mut state, 3).unwrap();
-            let square = [[1u64, 2, 3], [2, 3, 1], [3, 1, 2]];
-            for (r, row) in square.iter().enumerate() {
-                for (c, &v) in row.iter().enumerate() {
-                    let _ = insert_cage(
-                        &mut state,
-                        &cells(&[(r, c)]),
-                        mathdoku::Operator::Given,
-                        Some(v),
-                    )
-                    .unwrap();
-                }
-            }
+            let mut state = unique_3x3_app_state();
             let puzzle_before = state.puzzle.clone();
             let current_before = state.current.clone();
             let _ = fix(&mut state).unwrap();
@@ -1177,7 +1186,7 @@ mod tests {
     // ---- Category 3: mode-transition chains ----
 
     mod mode_transitions {
-        use super::helpers::{all_cells, cells};
+        use super::helpers::{all_cells, cells, unique_3x3_app_state};
         use crate::{AppState, Error, fix, insert_cage, new_empty, new_latin_square, unfix};
         use mathdoku::{Cell, Operator};
         use rand::{SeedableRng, rngs::StdRng};
@@ -1200,8 +1209,7 @@ mod tests {
             assert!(state.solution.is_some());
             let _ = unfix(&mut state).unwrap();
             assert!(state.solution.is_none());
-            let _ =
-                insert_cage(&mut state, &cells(&[(1, 0)]), Operator::Multiply, Some(2)).unwrap();
+            let _ = insert_cage(&mut state, &cells(&[(1, 0)]), Operator::Given, Some(2)).unwrap();
             let puzzle = state.puzzle.as_ref().unwrap();
             assert_eq!(puzzle.cages().count(), 3);
             assert!(state.solution.is_none());
@@ -1283,15 +1291,7 @@ mod tests {
 
         #[test]
         fn fix_twice_is_idempotent_on_solution() {
-            let mut state = AppState::default();
-            let _ = new_empty(&mut state, 3).unwrap();
-            let square = [[1u64, 2, 3], [2, 3, 1], [3, 1, 2]];
-            for (r, row) in square.iter().enumerate() {
-                for (c, &val) in row.iter().enumerate() {
-                    let _ = insert_cage(&mut state, &cells(&[(r, c)]), Operator::Given, Some(val))
-                        .unwrap();
-                }
-            }
+            let mut state = unique_3x3_app_state();
             let _ = fix(&mut state).unwrap();
             let solution_after_first = state.solution.clone();
             let _ = fix(&mut state).unwrap();
@@ -1356,7 +1356,7 @@ mod tests {
     // ---- Category 5: save-format wire stability ----
 
     mod save_format {
-        use super::helpers::cells;
+        use super::helpers::{cells, save_round_trip};
         use crate::{
             AppState, SAVE_VERSION, apply_loaded, insert_cage, new_empty, new_latin_square,
             serialize_save,
@@ -1421,13 +1421,14 @@ mod tests {
                 Some(3),
             )
             .unwrap();
-            let json = serialize_save(&source).unwrap();
-            let mut loaded = AppState::default();
-            let _ = apply_loaded(&mut loaded, &json).unwrap();
+            let loaded = save_round_trip(&source);
             assert_eq!(loaded.puzzle, source.puzzle);
             assert_eq!(loaded.solution, source.solution);
             assert_eq!(loaded.current, source.current);
-            assert_eq!(serialize_save(&loaded).unwrap(), json);
+            assert_eq!(
+                serialize_save(&loaded).unwrap(),
+                serialize_save(&source).unwrap()
+            );
         }
 
         #[test]
@@ -1435,13 +1436,14 @@ mod tests {
             let mut source = AppState::default();
             let mut rng = StdRng::seed_from_u64(8);
             let _ = new_latin_square(&mut source, 4, &mut rng).unwrap();
-            let json = serialize_save(&source).unwrap();
-            let mut loaded = AppState::default();
-            let _ = apply_loaded(&mut loaded, &json).unwrap();
+            let loaded = save_round_trip(&source);
             assert_eq!(loaded.puzzle, source.puzzle);
             assert_eq!(loaded.solution, source.solution);
             assert_eq!(loaded.current, source.current);
-            assert_eq!(serialize_save(&loaded).unwrap(), json);
+            assert_eq!(
+                serialize_save(&loaded).unwrap(),
+                serialize_save(&source).unwrap()
+            );
         }
 
         #[test]
@@ -1491,25 +1493,24 @@ mod tests {
 
         fn is_valid_latin_square(grid: &Grid, n: usize) -> bool {
             let expected: Vec<u8> = (1..=n as u8).collect();
-            for r in 0..n {
-                let mut row: Vec<u8> = (0..n)
-                    .map(|c| grid.cell_values(Cell::new(r, c)).unwrap().values()[0])
-                    .collect();
-                row.sort_unstable();
-                if row != expected {
-                    return false;
-                }
-            }
-            for c in 0..n {
-                let mut col: Vec<u8> = (0..n)
-                    .map(|r| grid.cell_values(Cell::new(r, c)).unwrap().values()[0])
-                    .collect();
-                col.sort_unstable();
-                if col != expected {
-                    return false;
-                }
-            }
-            true
+            let line_ok = |cells: Vec<u8>| {
+                let mut sorted = cells;
+                sorted.sort_unstable();
+                sorted == expected
+            };
+            (0..n).all(|r| {
+                line_ok(
+                    (0..n)
+                        .map(|c| grid.cell_values(Cell::new(r, c)).unwrap().values()[0])
+                        .collect(),
+                )
+            }) && (0..n).all(|c| {
+                line_ok(
+                    (0..n)
+                        .map(|r| grid.cell_values(Cell::new(r, c)).unwrap().values()[0])
+                        .collect(),
+                )
+            })
         }
 
         #[test]
@@ -1539,7 +1540,6 @@ mod tests {
         }
 
         #[test]
-        #[ignore = "#67: generate_latin_square(1) infinite-loops; enable once fixed"]
         fn generated_is_valid_latin_square_for_n_1() {
             let grid = solution_for(1, 1);
             assert!(is_valid_latin_square(&grid, 1));
@@ -1655,7 +1655,7 @@ mod tests {
 
     mod cage_shapes {
         use super::helpers::{cells, without_solution};
-        use crate::insert_cage;
+        use crate::{Error, insert_cage};
         use mathdoku::{Cell, Operator};
 
         #[test]
@@ -1760,22 +1760,23 @@ mod tests {
         }
 
         #[test]
-        fn triomino_given_currently_succeeds_with_empty_domains() {
-            // TODO(#68): #55 expects Err(InvalidOperationArity). insert_cage
-            // commits the cage; the cells collapse to empty domains instead.
+        fn triomino_given_returns_err() {
             let mut state = without_solution(4);
             let region = cells(&[(0, 0), (0, 1), (0, 2)]);
-            let st = insert_cage(&mut state, &region, Operator::Given, Some(1)).unwrap();
-            assert!(st.current.cell_values(Cell::new(0, 0)).unwrap().is_empty());
+            assert!(matches!(
+                insert_cage(&mut state, &region, Operator::Given, Some(1)),
+                Err(Error::Mathdoku(mathdoku::Error::InfeasibleOperation(_, _)))
+            ));
         }
 
         #[test]
-        fn triomino_subtract_currently_succeeds_with_empty_domains() {
-            // TODO(#68): #55 expects Err(InvalidOperationArity).
+        fn triomino_subtract_returns_err() {
             let mut state = without_solution(4);
             let region = cells(&[(0, 0), (0, 1), (0, 2)]);
-            let st = insert_cage(&mut state, &region, Operator::Subtract, Some(1)).unwrap();
-            assert!(st.current.cell_values(Cell::new(0, 0)).unwrap().is_empty());
+            assert!(matches!(
+                insert_cage(&mut state, &region, Operator::Subtract, Some(1)),
+                Err(Error::Mathdoku(mathdoku::Error::InfeasibleOperation(_, _)))
+            ));
         }
     }
 
@@ -1875,6 +1876,17 @@ mod tests {
         // does not hold across them. They are exercised by the dirty-flag property
         // below (which only inspects `dirty`).
 
+        fn bootstrap(n: usize, seed: u64, latin: bool) -> AppState {
+            let mut state = AppState::default();
+            if latin {
+                let mut rng = StdRng::seed_from_u64(seed);
+                let _ = new_latin_square(&mut state, n, &mut rng).unwrap();
+            } else {
+                let _ = new_empty(&mut state, n).unwrap();
+            }
+            state
+        }
+
         proptest! {
             #![proptest_config(ProptestConfig {
                 cases: 64,
@@ -1892,13 +1904,7 @@ mod tests {
                 // With-Solution target-derivation path (target = None) is covered
                 // by Category 4, not here; this property only exercises the
                 // current/puzzle consistency invariant.
-                let mut state = AppState::default();
-                if latin {
-                    let mut rng = StdRng::seed_from_u64(seed);
-                    let _ = new_latin_square(&mut state, n, &mut rng).unwrap();
-                } else {
-                    let _ = new_empty(&mut state, n).unwrap();
-                }
+                let mut state = bootstrap(n, seed, latin);
                 assert_consistent(&state);
                 for op in &ops {
                     if apply(&mut state, op) {
@@ -1913,13 +1919,7 @@ mod tests {
                 seed in any::<u64>(),
                 latin in any::<bool>(),
             ) {
-                let mut state = AppState::default();
-                if latin {
-                    let mut rng = StdRng::seed_from_u64(seed);
-                    let _ = new_latin_square(&mut state, n, &mut rng).unwrap();
-                } else {
-                    let _ = new_empty(&mut state, n).unwrap();
-                }
+                let mut state = bootstrap(n, seed, latin);
                 for op in &ops {
                     let _ = apply(&mut state, op);
                 }
@@ -1938,13 +1938,7 @@ mod tests {
                 latin in any::<bool>(),
                 do_unfix in any::<bool>(),
             ) {
-                let mut state = AppState::default();
-                if latin {
-                    let mut rng = StdRng::seed_from_u64(seed);
-                    let _ = new_latin_square(&mut state, n, &mut rng).unwrap();
-                } else {
-                    let _ = new_empty(&mut state, n).unwrap();
-                }
+                let mut state = bootstrap(n, seed, latin);
                 prop_assert!(state.dirty);
                 for op in &ops {
                     if apply(&mut state, op) {
