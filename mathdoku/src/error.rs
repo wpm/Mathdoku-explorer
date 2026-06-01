@@ -9,7 +9,7 @@ use std::fmt;
 
 use crate::cage::Cage;
 use crate::cell::Cell;
-use crate::operation::{Operation, Operator};
+use crate::operation::Operation;
 use crate::polyomino::Polyomino;
 use crate::{Grid, Puzzle};
 
@@ -25,8 +25,6 @@ pub enum Error {
     /// A polyomino cannot support the requested [`Operation`]: either the
     /// operator is invalid for the cell count, or the target is unreachable.
     InfeasibleOperation(Polyomino, Operation),
-    /// The arity of a tuple does not match the [`Operator`]'s requirements.
-    InvalidOperationArity(Operator, usize),
     /// A [`Cell`] referenced by an operation is not covered by any polyomino.
     CellNotCovered(Cell),
     /// Removing a [`Cell`] from a polyomino would disconnect the remaining cells.
@@ -117,10 +115,6 @@ impl fmt::Display for Error {
                     "tuple index {index} is out of range for cage with {len} tuples"
                 )
             }
-            Self::InvalidOperationArity(operator, arity) => write!(
-                f,
-                "{operator} cannot be applied to a tuple of arity {arity}"
-            ),
             Self::InvalidValue(v) => write!(f, "value {v} is outside the valid range 1..=9"),
             Self::GridPuzzleMismatch(grid, puzzle) => {
                 write!(f, "{grid} and {puzzle} are different sizes")

@@ -523,8 +523,13 @@ mod tests {
 
     #[test]
     fn solutions_infeasible_yields_none() {
-        // Given cage with value 5 is out of range for a 2×2 (valid values: 1..=2).
-        let puzzle = puzzle_with_cage(2, &[(0, 0)], Given, 5);
+        // A Given cage with value 5 is out of range for a 2×2 (valid values:
+        // 1..=2). `insert_cage` rejects such an infeasible cage, so we route it
+        // in through the deserialization seam — the way a corrupt save would —
+        // to confirm the solver still yields no solutions rather than panicking.
+        let cage = cage_at(&[(0, 0)], Given, 5);
+        let json = format!(r#"{{"n":2,"cages":[{}]}}"#, to_string(&cage).unwrap());
+        let puzzle: Puzzle = from_str(&json).unwrap();
         let g = Grid::new(2).unwrap();
         assert!(g.solutions(&puzzle).map(Result::unwrap).next().is_none());
     }

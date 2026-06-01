@@ -6,6 +6,7 @@
 #![allow(clippy::mutable_key_type)]
 
 use crate::Error::CageConflict;
+use crate::Error::InfeasibleOperation;
 use crate::Error::InvalidGridSize;
 use crate::cage::Cage;
 use crate::{Error, Polyomino};
@@ -71,6 +72,9 @@ impl Puzzle {
     /// # Errors
     /// Returns [`CageConflict`] if `cage`'s polyomino overlaps an
     /// existing cage's polyomino (but not if the cage is already present).
+    /// Returns [`InfeasibleOperation`] if `cage`'s target is unreachable for
+    /// this grid size (its constraint admits no value assignment), which would
+    /// otherwise collapse the covered cells to empty domains.
     pub fn insert_cage(&self, cage: Cage) -> Result<Self, Error> {
         // If the cage is already present, return a clone without error.
         if self.cages.contains(&cage) {
@@ -78,6 +82,16 @@ impl Puzzle {
         }
         if self.intersects_cage(cage.polyomino()) {
             return Err(CageConflict(cage));
+        }
+        // A cage whose constraint admits no satisfying tuple at this grid size
+        // is infeasible: committing it would silently prune its cells to empty
+        // domains. Building the MDD here also populates the cage's cache for the
+        // grid re-constrain that follows a successful insert.
+        if cage.mdd(self.n).tuples().next().is_none() {
+            return Err(InfeasibleOperation(
+                cage.polyomino().clone(),
+                cage.operation(),
+            ));
         }
         let mut cages = self.cages.clone();
         let _ = cages.insert(cage);
@@ -230,6 +244,18 @@ mod tests {
         // This cage shares cell (0,0) with the existing cage but has a different polyomino.
         let overlapping = cage_at(&[(0, 0)], Given, 1);
         assert!(matches!(p.insert_cage(overlapping), Err(CageConflict(_))));
+    }
+
+    #[test]
+    fn insert_cage_infeasible_target_returns_infeasible_operation() {
+        // On a 3×3 grid, two distinct cells in the same row cannot sum to 2
+        // (the smallest distinct pair is 1+2=3), so the cage admits no tuple.
+        let p = Puzzle::new(3).unwrap();
+        let cage = cage_at(&[(0, 0), (0, 1)], Add, 2);
+        assert!(matches!(
+            p.insert_cage(cage),
+            Err(Error::InfeasibleOperation(_, _))
+        ));
     }
 
     #[test]

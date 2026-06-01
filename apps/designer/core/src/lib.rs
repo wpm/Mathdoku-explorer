@@ -739,15 +739,17 @@ mod tests {
         }
 
         #[test]
-        fn insert_cage_infeasible_target_currently_succeeds() {
-            // TODO(#68): #55 expects Err(InfeasibleOperation). Two distinct
-            // collinear cells cannot sum to 2, but insert_cage commits the cage
-            // and prunes the cells to empty domains.
+        fn insert_cage_infeasible_target_returns_err() {
+            // Two distinct collinear cells cannot sum to 2, so the cage admits no
+            // satisfying assignment; insert_cage rejects it rather than committing
+            // a cage that prunes its cells to empty domains.
             let mut state = AppState::default();
             let _ = new_empty(&mut state, 3).unwrap();
             let region = cells(&[(0, 0), (0, 1)]);
-            let st = insert_cage(&mut state, &region, Operator::Add, Some(2)).unwrap();
-            assert!(st.current.cell_values(region[0]).unwrap().is_empty());
+            assert!(matches!(
+                insert_cage(&mut state, &region, Operator::Add, Some(2)),
+                Err(Error::Mathdoku(mathdoku::Error::InfeasibleOperation(_, _)))
+            ));
         }
 
         // --- remove_cage_at ---
