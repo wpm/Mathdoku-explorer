@@ -20,11 +20,13 @@ const EVENT_NEW: &str = "menu-new";
 const EVENT_OPEN: &str = "menu-open";
 const EVENT_SAVE: &str = "menu-save";
 const EVENT_SAVE_AS: &str = "menu-save-as";
+const EVENT_FIX: &str = "menu-fix";
+const EVENT_UNFIX: &str = "menu-unfix";
 const EVENT_REQUEST_CLOSE: &str = "request-close";
 
 // ---- menu ----
 
-/// Builds the application menu (File, Edit, View, Window; App menu on macOS).
+/// Builds the application menu (File, Edit, Puzzle, View, Window; App menu on macOS).
 fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let new = MenuItemBuilder::with_id("new", "New…")
         .accelerator("CmdOrCtrl+N")
@@ -66,6 +68,8 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
             &PredefinedMenuItem::select_all(app, None)?,
         ],
     )?;
+    let puzzle_menu = build_puzzle_menu(app)?;
+
     let window_menu = Submenu::with_items(
         app,
         "Window",
@@ -110,12 +114,36 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
         )?;
         Menu::with_items(
             app,
-            &[&app_menu, &file_menu, &edit_menu, &view_menu, &window_menu],
+            &[
+                &app_menu,
+                &file_menu,
+                &edit_menu,
+                &puzzle_menu,
+                &view_menu,
+                &window_menu,
+            ],
         )
     }
 
     #[cfg(not(target_os = "macos"))]
-    Menu::with_items(app, &[&file_menu, &edit_menu, &window_menu])
+    Menu::with_items(app, &[&file_menu, &edit_menu, &puzzle_menu, &window_menu])
+}
+
+/// Builds the Puzzle submenu (Fix / Unfix mode switching).
+///
+/// Both items are always visible; exactly one is enabled at a time, pushed from
+/// the frontend via [`commands::set_puzzle_menu_enabled`]. The item handles are
+/// stashed in app state so that command can reach them to toggle `set_enabled`.
+fn build_puzzle_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Submenu<R>> {
+    let fix = MenuItemBuilder::with_id("fix", "Fix Solution")
+        .accelerator("CmdOrCtrl+L")
+        .build(app)?;
+    let unfix = MenuItemBuilder::with_id("unfix", "Unfix Solution")
+        .accelerator("CmdOrCtrl+Shift+L")
+        .build(app)?;
+    let puzzle_menu = Submenu::with_items(app, "Puzzle", true, &[&fix, &unfix])?;
+    let _ = app.manage(PuzzleMenu { fix, unfix });
+    Ok(puzzle_menu)
 }
 
 /// Translates menu item IDs into frontend events emitted over the Tauri event bus.
@@ -126,6 +154,8 @@ fn handle_menu_event<R: Runtime>(app: &AppHandle<R>, event: tauri::menu::MenuEve
         "open" => EVENT_OPEN,
         "save" => EVENT_SAVE,
         "save_as" => EVENT_SAVE_AS,
+        "fix" => EVENT_FIX,
+        "unfix" => EVENT_UNFIX,
         _ => return,
     };
     let _ = app.emit(event_name, ());
@@ -206,6 +236,7 @@ pub fn run() {
             remove_cage_at,
             fix,
             unfix,
+            set_puzzle_menu_enabled,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -477,7 +508,7 @@ mod tests {
     #[test]
     fn handle_menu_event_known_ids_emit_without_panic() {
         let app = mock_app();
-        for id in ["new", "open", "save", "save_as"] {
+        for id in ["new", "open", "save", "save_as", "fix", "unfix"] {
             handle_menu_event(
                 app.handle(),
                 tauri::menu::MenuEvent {

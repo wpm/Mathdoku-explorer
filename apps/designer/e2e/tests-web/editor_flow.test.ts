@@ -44,9 +44,11 @@ test.describe('web build editor flow', () => {
       page.locator('.grid-svg text').filter({ hasText: /^\+3$/ }),
     ).toBeVisible();
 
-    // Solution-mode toggle (fix/unfix): a Without-Solution puzzle offers Fix.
-    await expect(
-      page.getByRole('button', { name: 'Fix Solution', exact: true }),
-    ).toBeVisible();
+    // The puzzle is still in Without-Solution mode (Fix/Unfix moved to the
+    // Puzzle menu / shortcuts; see puzzle_menu_shortcuts.test.ts).
+    await expect(page.locator('.puzzle-wrap')).toHaveAttribute(
+      'data-solution-mode',
+      'without',
+    );
   });
 });

@@ -463,6 +463,47 @@ pub fn App() -> impl IntoView {
         listen("menu-open", load_cb.as_ref().unchecked_ref()).await;
         load_cb.forget();
 
+        // menu-fix / menu-unfix: the native Puzzle menu's accelerators
+        // (CmdOrCtrl+L / CmdOrCtrl+Shift+L) arrive here. Both delegate to
+        // ipc::fix / ipc::unfix and push the prior state onto the undo stack like
+        // any other puzzle change. The mode predicate is re-checked defensively so
+        // a stale menu event can't drive an invalid transition. (On web `listen`
+        // is a no-op and these never fire — the in-page keydown handler drives
+        // Fix/Unfix there instead.)
+        #[allow(clippy::type_complexity)]
+        let make_mode_cb = move |needs_solution: bool,
+                                 fut_fn: fn() -> std::pin::Pin<
+            Box<dyn Future<Output = Result<State, ipc::IpcError>>>,
+        >| {
+            Closure::wrap(Box::new(move |_: JsValue| {
+                if designer_state
+                    .get_untracked()
+                    .is_some_and(|st| st.solution.is_some() == needs_solution)
+                {
+                    spawn_local(async move {
+                        match fut_fn().await {
+                            Ok(new_st) => {
+                                if let Some(pre) = designer_state.get_untracked() {
+                                    undo_stack.update(|s| s.push(pre));
+                                }
+                                redo_stack.update(Vec::clear);
+                                designer_state.set(Some(new_st));
+                            }
+                            Err(e) => error_msg.set(Some(e.to_string())),
+                        }
+                    });
+                }
+            }) as Box<dyn Fn(JsValue)>)
+        };
+        // Fix requires Without-Solution mode (solution.is_some() == false);
+        // Unfix requires With-Solution mode (solution.is_some() == true).
+        let fix_cb = make_mode_cb(false, || Box::pin(ipc::fix()));
+        listen("menu-fix", fix_cb.as_ref().unchecked_ref()).await;
+        fix_cb.forget();
+        let unfix_cb = make_mode_cb(true, || Box::pin(ipc::unfix()));
+        listen("menu-unfix", unfix_cb.as_ref().unchecked_ref()).await;
+        unfix_cb.forget();
+
         let close_cb = Closure::wrap(Box::new(move |_: JsValue| {
             show_unsaved_modal.set(true);
         }) as Box<dyn Fn(JsValue)>);

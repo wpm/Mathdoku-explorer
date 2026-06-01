@@ -9,12 +9,14 @@ async function setup(page: Page) {
   await page.locator('.grid-svg').focus();
 }
 
-const fixButton = (page: Page) =>
-  page.getByRole('button', { name: 'Fix Solution', exact: true });
-const unfixButton = (page: Page) =>
-  page.getByRole('button', { name: 'Unfix Solution', exact: true });
 const selectorLabels = (page: Page) =>
   page.locator('.grid-svg text[font-weight="700"]');
+
+// Mode marker on .puzzle-wrap ("with"/"without"). Fix/Unfix themselves moved to
+// the native Puzzle menu and the CmdOrCtrl+L shortcut; the shortcut path is
+// covered in tests-web/puzzle_menu_shortcuts.test.ts (the in-page handler is
+// `#[cfg(feature = "web")]`, so it does not exist in this Tauri-path build).
+const mode = (page: Page) => page.locator('.puzzle-wrap[data-solution-mode]');
 
 test.describe('new-puzzle modal authoring mode', () => {
   test('No Solution button creates a Without-Solution puzzle', async ({
@@ -31,9 +33,7 @@ test.describe('new-puzzle modal authoring mode', () => {
       .click();
     await waitForGrid(page);
 
-    // Without-Solution mode offers the Fix control, not Unfix.
-    await expect(fixButton(page)).toBeVisible();
-    await expect(unfixButton(page)).toHaveCount(0);
+    await expect(mode(page)).toHaveAttribute('data-solution-mode', 'without');
   });
 
   test('Random Solution button creates a With-Solution puzzle', async ({
@@ -50,69 +50,7 @@ test.describe('new-puzzle modal authoring mode', () => {
       .click();
     await waitForGrid(page);
 
-    await expect(unfixButton(page)).toBeVisible();
-    await expect(fixButton(page)).toHaveCount(0);
-  });
-});
-
-test.describe('fix / unfix mode switching', () => {
-  test('Unfix drops the solution and Fix snapshots it back', async ({
-    page,
-  }) => {
-    // A fully-given 3×3 puzzle: unique solution, so Fix Solution is enabled after unfix.
-    const given3x3 = {
-      n: 3,
-      cages: [
-        {
-          polyomino: [{ row: 0, column: 0 }],
-          operation: { operator: 'Given', target: 1 },
-        },
-        {
-          polyomino: [{ row: 0, column: 1 }],
-          operation: { operator: 'Given', target: 2 },
-        },
-        {
-          polyomino: [{ row: 0, column: 2 }],
-          operation: { operator: 'Given', target: 3 },
-        },
-        {
-          polyomino: [{ row: 1, column: 0 }],
-          operation: { operator: 'Given', target: 2 },
-        },
-        {
-          polyomino: [{ row: 1, column: 1 }],
-          operation: { operator: 'Given', target: 3 },
-        },
-        {
-          polyomino: [{ row: 1, column: 2 }],
-          operation: { operator: 'Given', target: 1 },
-        },
-        {
-          polyomino: [{ row: 2, column: 0 }],
-          operation: { operator: 'Given', target: 3 },
-        },
-        {
-          polyomino: [{ row: 2, column: 1 }],
-          operation: { operator: 'Given', target: 1 },
-        },
-        {
-          polyomino: [{ row: 2, column: 2 }],
-          operation: { operator: 'Given', target: 2 },
-        },
-      ],
-    };
-    await installTauriStubs(page, given3x3);
-    await gotoApp(page);
-    await waitForGrid(page);
-
-    await expect(unfixButton(page)).toBeVisible();
-    await unfixButton(page).click();
-    // After unfix the cages remain; unique solution means Fix Solution becomes enabled.
-    await expect(fixButton(page)).toBeVisible();
-    await expect(fixButton(page)).toBeEnabled();
-
-    await fixButton(page).click();
-    await expect(unfixButton(page)).toBeVisible();
+    await expect(mode(page)).toHaveAttribute('data-solution-mode', 'with');
   });
 });
 

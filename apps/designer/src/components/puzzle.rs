@@ -124,6 +124,20 @@ pub fn Puzzle(
         });
     }
 
+    // Keep the native Puzzle menu's Fix / Unfix items in sync with the current
+    // mode. Exactly one is enabled at a time, using the same predicates that
+    // formerly gated the footer button: Fix is offered only in Without-Solution
+    // mode with a unique completion, Unfix only in With-Solution mode. No-op on
+    // web (no native menu); see `ipc::set_puzzle_menu_enabled`.
+    Effect::new(move |_| {
+        let has_solution = designer_state.get().solution.is_some();
+        let fix_enabled = !has_solution && has_unique_solution.get() == Some(true);
+        let unfix_enabled = has_solution;
+        spawn_local(async move {
+            let _ = ipc::set_puzzle_menu_enabled(fix_enabled, unfix_enabled).await;
+        });
+    });
+
     // Helper: apply a lightweight navigation state change (no undo entry).
     let set_state = move |new_st: State| {
         on_state_change.run(new_st.clone());
@@ -217,6 +231,11 @@ pub fn Puzzle(
     // Mode switching: `fix` snapshots the unique completion, `unfix` drops it.
     // Both go through the backend (which owns the persisted solution) and are
     // pushed onto the undo stack like any other puzzle change.
+    //
+    // WASM-only: on web the Cmd+L / Cmd+Shift+L keydown branches below drive
+    // these. On native the Puzzle menu accelerators reach Fix/Unfix through
+    // `app.rs` instead, so the in-page closures would be dead code — cfg them out.
+    #[cfg(feature = "web")]
     let mode_switch =
         move |fut: std::pin::Pin<Box<dyn Future<Output = Result<State, ipc::IpcError>>>>| {
             spawn_local(async move {
@@ -234,7 +253,9 @@ pub fn Puzzle(
                 }
             });
         };
+    #[cfg(feature = "web")]
     let on_fix = Callback::new(move |(): ()| mode_switch(Box::pin(ipc::fix())));
+    #[cfg(feature = "web")]
     let on_unfix = Callback::new(move |(): ()| mode_switch(Box::pin(ipc::unfix())));
 
     let on_keydown = move |ev: leptos::ev::KeyboardEvent| {
@@ -274,6 +295,25 @@ pub fn Puzzle(
                 apply_history(redo_stack, undo_stack);
             } else {
                 apply_history(undo_stack, redo_stack);
+            }
+            return;
+        }
+
+        // WASM-only: Cmd+L fixes the solution, Cmd+Shift+L unfixes it. On native
+        // the Puzzle menu accelerators drive Fix/Unfix (handled in app.rs), and
+        // this cfg gate keeps the same keypress from also firing here. Each branch
+        // is a no-op unless its transition is valid, using the same predicates the
+        // menu's enabled state mirrors: Fix needs Without-Solution mode with a
+        // unique completion; Unfix needs With-Solution mode.
+        #[cfg(feature = "web")]
+        if ev.meta_key() && key.eq_ignore_ascii_case("l") {
+            ev.prevent_default();
+            if shift {
+                if st.solution.is_some() {
+                    on_unfix.run(());
+                }
+            } else if st.solution.is_none() && has_unique_solution.get_untracked() == Some(true) {
+                on_fix.run(());
             }
             return;
         }
@@ -546,7 +586,15 @@ pub fn Puzzle(
     });
 
     view! {
-        <div class="puzzle-wrap">
+        // `data-solution-mode` mirrors `designer_state.solution`: "with" once a
+        // solution is fixed, "without" otherwise. It is the canonical mode marker
+        // now that the footer Fix/Unfix button (which e2e tests keyed on) is gone.
+        <div
+            class="puzzle-wrap"
+            data-solution-mode=move || {
+                if designer_state.get().solution.is_some() { "with" } else { "without" }
+            }
+        >
             <svg
                 class="grid-svg"
                 viewBox=vb
@@ -571,33 +619,10 @@ pub fn Puzzle(
                 <OperationSelector />
             </svg>
             <div class="puzzle-footer">
+                // Fix/Unfix moved out of the footer into the native Puzzle menu
+                // (and Cmd+L / Cmd+Shift+L shortcuts); only CageStats and
+                // SolutionCount remain here.
                 <CageStats />
-                {move || {
-                    // `Fix Solution` is offered in Without-Solution mode; the backend
-                    // rejects it unless the puzzle has exactly one completion, so it is
-                    // disabled until a unique solution exists. `Unfix Solution` is
-                    // offered in With-Solution mode. The button keeps a fixed width (set
-                    // in CSS) so its size never changes between the two labels.
-                    let btn_style = format!(
-                        "padding:4px 10px;border:0.5px solid {LINE};border-radius:5px;\
-                         background:{BG};color:{INK};font-size:12px;cursor:pointer;"
-                    );
-                    if designer_state.get().solution.is_some() {
-                        view! {
-                            <button class="fix-solution-btn" style=btn_style on:click=move |_| on_unfix.run(())>"Unfix Solution"</button>
-                        }.into_any()
-                    } else {
-                        let enabled = has_unique_solution.get() == Some(true);
-                        let style = if enabled {
-                            btn_style
-                        } else {
-                            format!("{btn_style}opacity:0.5;cursor:default;")
-                        };
-                        view! {
-                            <button class="fix-solution-btn" style=style disabled=!enabled on:click=move |_| on_fix.run(())>"Fix Solution"</button>
-                        }.into_any()
-                    }
-                }}
                 <SolutionCount />
             </div>
         </div>

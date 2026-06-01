@@ -98,6 +98,13 @@ struct TitleArgs {
     title: String,
 }
 
+#[cfg(not(feature = "web"))]
+#[derive(Serialize)]
+struct MenuEnabledArgs {
+    fix_enabled: bool,
+    unfix_enabled: bool,
+}
+
 // ---- low-level call helpers ----
 
 /// Detects the `Err(String)` arm of a Tauri command result.
@@ -301,6 +308,33 @@ pub async fn unfix() -> Result<State, IpcError> {
 #[cfg(not(feature = "web"))]
 pub async fn set_window_title(title: String) -> Result<(), IpcError> {
     call_unit("set_window_title", TitleArgs { title }).await
+}
+
+/// Pushes the enabled state of the native Puzzle menu's Fix / Unfix items.
+/// Exactly one is enabled at a time, mirroring the frontend's mode predicates.
+#[cfg(not(feature = "web"))]
+pub async fn set_puzzle_menu_enabled(
+    fix_enabled: bool,
+    unfix_enabled: bool,
+) -> Result<(), IpcError> {
+    call_unit(
+        "set_puzzle_menu_enabled",
+        MenuEnabledArgs {
+            fix_enabled,
+            unfix_enabled,
+        },
+    )
+    .await
+}
+
+/// Web build: there is no native menu bar, so this is a no-op.
+#[cfg(feature = "web")]
+// WASM-only: no native menu to enable/disable on web.
+pub async fn set_puzzle_menu_enabled(
+    _fix_enabled: bool,
+    _unfix_enabled: bool,
+) -> Result<(), IpcError> {
+    Ok(())
 }
 
 /// Sets the browser tab title.

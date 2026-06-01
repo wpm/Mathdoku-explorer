@@ -142,15 +142,6 @@ a:hover {
   padding-left: calc(var(--grid-size) * 14 / 600);
 }
 
-/* The fix/unfix button sits in the centre column. The fixed width is wide
-   enough for the longer "Unfix Solution" label so the size never changes. */
-.fix-solution-btn {
-  grid-column: 2;
-  width: 8.5rem;
-  white-space: nowrap;
-  text-align: center;
-}
-
 /* Flash overlay animations */
 @keyframes flash-remove {
   from {

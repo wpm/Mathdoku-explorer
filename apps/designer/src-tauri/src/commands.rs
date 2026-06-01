@@ -12,7 +12,15 @@ use serde_json::{from_str, to_string};
 
 use mathdoku::{Cell, Operator, Polyomino};
 use mathdoku_designer_core::{self as core, AppState, DocState, SaveResult, State};
+use tauri::menu::MenuItem;
 use tauri::{AppHandle, Manager, Runtime, State as TauriState};
+
+/// Handles to the native Puzzle menu's Fix / Unfix items, stored in app state so
+/// [`set_puzzle_menu_enabled`] can toggle their enabled state from the frontend.
+pub struct PuzzleMenu<R: Runtime> {
+    pub fix: MenuItem<R>,
+    pub unfix: MenuItem<R>,
+}
 
 /// Filename of the recent-file record stored in the app data directory.
 pub const RECENT_FILE: &str = "last_open.json";
@@ -215,6 +223,31 @@ pub fn fix(state: TauriState<Mutex<AppState>>) -> Result<State, String> {
 pub fn unfix(state: TauriState<Mutex<AppState>>) -> Result<State, String> {
     let mut s = state.lock().map_err(|e| e.to_string())?;
     core::unfix(&mut s).map_err(|e| e.to_string())
+}
+
+/// Updates the enabled state of the native Puzzle menu's Fix / Unfix items.
+///
+/// The frontend pushes this whenever the puzzle's mode or unique-solution status
+/// changes so the menu reflects which transition is currently valid.
+///
+/// # Errors
+/// Returns an error string if setting either item's enabled state fails.
+#[tauri::command]
+pub fn set_puzzle_menu_enabled<R: Runtime>(
+    fix_enabled: bool,
+    unfix_enabled: bool,
+    app: AppHandle<R>,
+) -> Result<(), String> {
+    // `AppHandle<R>` ties the command's runtime so the `PuzzleMenu<R>` lookup
+    // resolves; a bare `State<PuzzleMenu<R>>` arg leaves `R` unconstrained.
+    let menu = app.state::<PuzzleMenu<R>>();
+    menu.fix
+        .set_enabled(fix_enabled)
+        .map_err(|e| e.to_string())?;
+    menu.unfix
+        .set_enabled(unfix_enabled)
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// Removes the cage covering `polyomino` from the current puzzle.
