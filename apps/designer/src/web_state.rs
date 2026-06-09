@@ -57,7 +57,7 @@ pub fn set_window_title(title: &str) {
 }
 
 /// A short banner rendered above the canvas, making the ephemeral nature of the
-/// web preview explicit: reloading the tab starts the visitor over (ADR-0002).
+/// web preview explicit: reloading the tab starts the visitor over.
 ///
 /// Invoked as `<EphemeralBanner />` through Leptos's `view!` macro, never for
 /// its return value, so `must_use_candidate` does not apply.

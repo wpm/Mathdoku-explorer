@@ -23,11 +23,7 @@ use std::collections::{HashMap, HashSet};
 /// tuples exist.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Mdd {
-    n: N,
-    constraint: Constraint,
-    /// Collinear-line metadata: for each depth `d`, which line indices include
-    /// cell `d`, and what the set of depths for each line is.
-    line_meta: LineMeta,
+    dp: CageDp,
     edges: HashMap<Node, Vec<(N, Node)>>,
     fills: Vec<Fill>,
 }
@@ -50,22 +46,13 @@ impl Mdd {
         target: T,
         lines: &[Vec<usize>],
     ) -> Result<Self, Error> {
-        let constraint = Constraint {
-            operator,
-            target,
-            arity: T::from(k),
-        };
-        let line_meta = LineMeta::new(lines, k as usize);
-        let num_lines = line_meta.num_lines();
+        let dp = CageDp::new(n, k, operator, target, lines);
         let root = Node {
             depth: 0,
-            value: constraint.unit(),
-            used: vec![Fill::default(); num_lines].into_boxed_slice(),
+            state: dp.root(),
         };
         let mut mdd = Self {
-            n,
-            constraint,
-            line_meta,
+            dp,
             edges: HashMap::new(),
             fills: Vec::new(),
         };
@@ -75,8 +62,7 @@ impl Mdd {
     }
 
     /// Recursively builds the MDD rooted at `head`, adding edges for all values
-    /// that are not pruned by the constraint's monotonicity bounds or collinear
-    /// distinctness.
+    /// whose [`CageDp::step`] transition yields a successor state.
     ///
     /// An edge is only inserted if the tail node is either a valid terminal
     /// (`depth == arity` and `value == target`) or itself has outgoing edges.
@@ -86,32 +72,16 @@ impl Mdd {
             return;
         }
         debug!("{self}");
-        let remaining = self.constraint.arity - head.depth - 1;
-        let n_t = T::from(self.n);
-        let depth_idx = head.depth as usize;
-        let lines_at_depth = self.line_meta.lines_at_depth(depth_idx).to_vec();
 
-        for v in 1..=self.n {
-            let i = T::from(v);
-            if self.constraint.pruned(head.value, i, remaining) {
-                break;
-            }
-            if self.constraint.skipped(head.value, i, remaining, n_t) {
-                continue;
-            }
-            // Collinear distinctness: skip v if already used in any open line at this depth.
-            if lines_at_depth
-                .iter()
-                .any(|&(line_idx, _)| head.used[line_idx].contains(v))
-            {
-                continue;
-            }
-
-            let tail_used = self.line_meta.advance_used(&head.used, depth_idx, v);
+        for v in 1..=self.dp.n {
+            let state = match self.dp.step(head.depth, &head.state, v) {
+                Step::Stop => break,
+                Step::Skip => continue,
+                Step::Tail(state) => state,
+            };
             let tail = Node {
                 depth: head.depth + 1,
-                value: self.constraint.operation(head.value, i),
-                used: tail_used,
+                state,
             };
 
             // Recursively build tail's subtree before deciding whether to link it.
@@ -133,16 +103,14 @@ impl Mdd {
     /// Returns true if `node` is a valid accepting terminal: depth equals arity
     /// and accumulated value equals target.
     const fn is_valid_terminal(&self, node: &Node) -> bool {
-        node.depth == self.constraint.arity && node.value == self.constraint.target
+        self.dp.accept(node.depth, &node.state)
     }
 
     /// Returns a copy of this MDD with edges for forbidden values removed and
     /// dead nodes garbage-collected via downward and upward cascades.
     fn remove_support(&self, forbidden: &HashMap<T, HashSet<N>>) -> Self {
         let mut mdd = Self {
-            n: self.n,
-            constraint: self.constraint,
-            line_meta: self.line_meta.clone(),
+            dp: self.dp.clone(),
             edges: self.edges.clone(),
             fills: Vec::new(),
         };
@@ -197,7 +165,7 @@ impl Mdd {
         q_down: &mut Vec<Node>,
         q_up: &mut Vec<Node>,
     ) {
-        let surviving: HashSet<N> = (1..=self.n).filter(|v| !forbidden.contains(v)).collect();
+        let surviving: HashSet<N> = (1..=self.dp.n).filter(|v| !forbidden.contains(v)).collect();
         let tails_before = Self::tails_of(&self.edges, heads);
 
         let orig: Vec<(Node, Vec<(N, Node)>)> = heads
@@ -286,8 +254,7 @@ impl Mdd {
             if self.edges.contains_key(&node) {
                 continue;
             }
-            let is_terminal =
-                node.value == self.constraint.target && node.depth == self.constraint.arity;
+            let is_terminal = self.dp.accept(node.depth, &node.state);
             if !is_terminal {
                 let heads: Vec<Node> = self
                     .edges
@@ -319,14 +286,14 @@ impl Mdd {
     }
 
     fn at_arity(&self, tail: &Node) -> bool {
-        let (d, a) = (u64::from(tail.depth), u64::from(self.constraint.arity));
+        let (d, a) = (u64::from(tail.depth), u64::from(self.dp.constraint.arity));
         debug_assert!(d <= a, "depth {d} > arity {a}");
         Self::log_if(d == a, tail.depth, &format!("{tail} Arity limit met"))
     }
 
     fn at_target(&self, node: &Node) -> bool {
         Self::log_if(
-            self.constraint.target_reached(node.value),
+            self.dp.constraint.target_reached(node.state.value),
             node.depth,
             &format!("{node} Target reached"),
         )
@@ -343,7 +310,7 @@ impl Mdd {
     ///
     /// Returns `Err(EmptyFills)` if no edges exist at any depth (empty diagram).
     fn fills_from_edges(&self) -> Result<Vec<Fill>, Error> {
-        let k = self.constraint.arity as usize;
+        let k = self.dp.constraint.arity as usize;
         if k == 0 {
             return Err(Error::EmptyFills);
         }
@@ -364,11 +331,9 @@ impl Mdd {
 
     #[allow(dead_code)] // used only in tests to verify MDD contents
     pub(crate) fn tuples(&self) -> Vec<Vec<N>> {
-        let num_lines = self.line_meta.num_lines();
         let root = Node {
             depth: 0,
-            value: self.constraint.unit(),
-            used: vec![Fill::default(); num_lines].into_boxed_slice(),
+            state: self.dp.root(),
         };
         let mut result = Vec::new();
         self.collect_paths(&root, &mut Vec::new(), &mut result);
@@ -378,7 +343,7 @@ impl Mdd {
     fn collect_paths(&self, head: &Node, path: &mut Vec<N>, result: &mut Vec<Vec<N>>) {
         match self.edges.get(head) {
             None => {
-                if head.value == self.constraint.target && head.depth == self.constraint.arity {
+                if self.dp.accept(head.depth, &head.state) {
                     result.push(path.clone());
                 }
             }
@@ -395,7 +360,7 @@ impl Mdd {
 
 impl std::fmt::Display for Mdd {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "MDD({} {} nodes)", self.constraint, self.edges.len())
+        write!(f, "MDD({} {} nodes)", self.dp.constraint, self.edges.len())
     }
 }
 
@@ -412,7 +377,7 @@ impl Memo for Mdd {
             .iter()
             .enumerate()
             .filter_map(|(i, fill)| {
-                let excluded: HashSet<N> = (1..=self.n).filter(|v| !fill.contains(*v)).collect();
+                let excluded: HashSet<N> = (1..=self.dp.n).filter(|v| !fill.contains(*v)).collect();
                 if excluded.is_empty() {
                     None
                 } else {
@@ -426,6 +391,108 @@ impl Memo for Mdd {
         narrowed.fills = narrowed.fills_from_edges()?;
         Ok(narrowed)
     }
+}
+
+/// The cage dynamic program: the conjunction of a commutative arithmetic
+/// constraint and collinear distinctness, expressed as an explicit
+/// `root`/`step`/`accept` transition over [`State`].
+///
+/// [`Mdd`] construction consumes this DP, but the DP itself is standalone:
+/// it can be driven directly without building a diagram.
+#[derive(Clone, PartialEq, Eq, Debug)]
+struct CageDp {
+    n: N,
+    constraint: Constraint,
+    /// Collinear-line metadata: for each depth `d`, which line indices include
+    /// cell `d`, and what the set of depths for each line is.
+    line_meta: LineMeta,
+}
+
+impl CageDp {
+    fn new(n: N, k: N, operator: CommutativeOperator, target: T, lines: &[Vec<usize>]) -> Self {
+        Self {
+            n,
+            constraint: Constraint {
+                operator,
+                target,
+                arity: T::from(k),
+            },
+            line_meta: LineMeta::new(lines, k as usize),
+        }
+    }
+
+    /// The DP state before any value has been placed.
+    fn root(&self) -> State {
+        State {
+            value: self.constraint.unit(),
+            used: vec![Fill::default(); self.line_meta.num_lines()].into_boxed_slice(),
+        }
+    }
+
+    /// One DP transition: the outcome of placing value `v` at cell `depth`
+    /// from `state`.
+    ///
+    /// Returns [`Step::Stop`] when the constraint's monotonicity bound rules
+    /// out `v` and every larger value, [`Step::Skip`] when `v` alone is
+    /// infeasible (arithmetic skip or collinear distinctness violation), and
+    /// [`Step::Tail`] with the successor state otherwise.
+    fn step(&self, depth: T, state: &State, v: N) -> Step {
+        let remaining = self.constraint.arity - depth - 1;
+        let i = T::from(v);
+        if self.constraint.pruned(state.value, i, remaining) {
+            return Step::Stop;
+        }
+        if self
+            .constraint
+            .skipped(state.value, i, remaining, T::from(self.n))
+        {
+            return Step::Skip;
+        }
+        // Collinear distinctness: skip v if already used in any open line at this depth.
+        let depth_idx = depth as usize;
+        if self
+            .line_meta
+            .lines_at_depth(depth_idx)
+            .iter()
+            .any(|&(line_idx, _)| state.used[line_idx].contains(v))
+        {
+            return Step::Skip;
+        }
+        Step::Tail(State {
+            value: self.constraint.operation(state.value, i),
+            used: self.line_meta.advance_used(&state.used, depth_idx, v),
+        })
+    }
+
+    /// Returns true if `state` at `depth` is accepting: every cell has been
+    /// placed and the accumulated value equals the target.
+    const fn accept(&self, depth: T, state: &State) -> bool {
+        depth == self.constraint.arity && state.value == self.constraint.target
+    }
+}
+
+/// Per-node DP state; depth is positional and lives in [`Node`].
+#[derive(Eq, PartialEq, Hash, Debug, Clone)]
+struct State {
+    /// Accumulated arithmetic value.
+    value: T,
+    /// Used-value sets for still-open collinear lines (indexed by line index).
+    /// Closed lines are zeroed out so that they don't inflate the key space.
+    /// `Fill` doubles as a compact bitset (u16) for tracking which values have
+    /// been placed in a line; its bitmap operations serve set-membership here,
+    /// not candidate-fill semantics.
+    used: Box<[Fill]>,
+}
+
+/// Result of one [`CageDp::step`] transition.
+#[derive(Debug)]
+enum Step {
+    /// The value and every larger value are infeasible: stop scanning values.
+    Stop,
+    /// This value alone is infeasible: skip it.
+    Skip,
+    /// The value is feasible: the successor state.
+    Tail(State),
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
@@ -528,21 +595,16 @@ impl LineMeta {
     }
 }
 
+/// A hash-cons key for the MDD: the DP [`State`] at a given depth.
 #[derive(Eq, PartialEq, Hash, Debug, Clone)]
 struct Node {
     depth: T,
-    value: T,
-    /// Used-value sets for still-open collinear lines (indexed by line index).
-    /// Closed lines are zeroed out so that they don't inflate the key space.
-    /// `Fill` doubles as a compact bitset (u16) for tracking which values have
-    /// been placed in a line; its bitmap operations serve set-membership here,
-    /// not candidate-fill semantics.
-    used: Box<[Fill]>,
+    state: State,
 }
 
 impl std::fmt::Display for Node {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Node({} @ level {})", self.value, self.depth)
+        write!(f, "Node({} @ level {})", self.state.value, self.depth)
     }
 }
 
@@ -885,6 +947,64 @@ mod tests {
             !m.get(2).unwrap().contains(4),
             "arm at depth 2 must not admit 4"
         );
+    }
+
+    // ---- CageDp standalone ----
+
+    #[test]
+    fn cage_dp_enumerates_l_cage_tuples_without_an_mdd() {
+        setup();
+        // The +6 L-cage in n=4: row line [0,1], column line [0,2].
+        // Driven through root/step/accept alone — no Mdd is constructed.
+        let lines = vec![vec![0, 1], vec![0, 2]];
+        let dp = CageDp::new(4, 3, Add, 6, &lines);
+        assert_eq!(
+            dp_tuples(&dp, 3),
+            vec![
+                vec![1, 2, 3],
+                vec![1, 3, 2],
+                vec![2, 1, 3],
+                vec![2, 3, 1],
+                vec![3, 1, 2],
+                vec![3, 2, 1],
+                vec![4, 1, 1],
+            ]
+        );
+    }
+
+    /// Enumerates a DP's accepted tuples by driving `root`/`step`/`accept`
+    /// directly, without building a diagram.
+    fn dp_tuples(dp: &CageDp, k: T) -> Vec<Vec<N>> {
+        fn go(
+            dp: &CageDp,
+            k: T,
+            depth: T,
+            state: &State,
+            path: &mut Vec<N>,
+            out: &mut Vec<Vec<N>>,
+        ) {
+            if depth == k {
+                if dp.accept(depth, state) {
+                    out.push(path.clone());
+                }
+                return;
+            }
+            for v in 1..=dp.n {
+                match dp.step(depth, state, v) {
+                    Step::Stop => break,
+                    Step::Skip => {}
+                    Step::Tail(next) => {
+                        path.push(v);
+                        go(dp, k, depth + 1, &next, path, out);
+                        let _ = path.pop();
+                    }
+                }
+            }
+        }
+        let mut out = Vec::new();
+        go(dp, k, 0, &dp.root(), &mut Vec::new(), &mut out);
+        out.sort();
+        out
     }
 
     // ---- brute-force oracle cross-check ----

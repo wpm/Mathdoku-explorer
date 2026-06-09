@@ -26,7 +26,7 @@ extern "C" {
     async fn listen(event: &str, handler: &js_sys::Function) -> JsValue;
 }
 
-// The web build (ADR-0002) has no Tauri event bus. Menu-driven actions either
+// The web build has no Tauri event bus. Menu-driven actions either
 // arrive through the first-launch modal (New) or have no web analog (Save,
 // Open, Quit/close), so `listen` is a no-op here: the handlers below are still
 // registered but never fire, and nothing touches `window.__TAURI__`.
