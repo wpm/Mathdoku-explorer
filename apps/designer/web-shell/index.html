@@ -1,0 +1,64 @@
+<!doctype html>
+<!--
+  The /try iframe shell from ADR-0002. The shell owns the page chrome; the
+  iframe owns the canvas, pointed at the canonical web build deployed by
+  .github/workflows/deploy-main.yml. Phase 7's website will either point its
+  /try page at this file or replace it — either way the markup stays this
+  small, which is why there is no CSS framework here.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Try Mathdoku Designer</title>
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+        font-family: system-ui, sans-serif;
+      }
+      header {
+        padding: 0.5rem 1rem;
+        border-bottom: 1px solid #ccc;
+      }
+      header h1 {
+        display: inline;
+        font-size: 1.2rem;
+        margin: 0 1rem 0 0;
+      }
+      .banner {
+        display: inline;
+        font-style: italic;
+      }
+      iframe {
+        flex: 1;
+        border: 0;
+        width: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Mathdoku Designer</h1>
+      <p class="banner">
+        Ephemeral demo — install the app to save what you make.
+      </p>
+      <a href="https://github.com/wpm/Mathdoku">Mathdoku on GitHub</a>
+    </header>
+    <!--
+      allow-scripts: the WASM bundle is JavaScript-bootstrapped.
+      allow-same-origin: GitHub Pages sends no CORS headers, so an
+      opaque-origin sandbox could not fetch the bundle's own .wasm asset.
+    -->
+    <iframe
+      src="https://wpm.github.io/Mathdoku/main/"
+      title="Mathdoku Designer web preview"
+      sandbox="allow-scripts allow-same-origin"
+    ></iframe>
+  </body>
+</html>

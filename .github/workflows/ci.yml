@@ -189,6 +189,54 @@ jobs:
       - name: trunk build --release --features web
         run: trunk build --release --features web
 
+  # ── Bundle size (ADR-0002 ≤ 2 MB brotli budget) ────────────────────────────
+  # Enforced here rather than in the deploy workflows: bundle bloat should
+  # block merges, not block deploys. If this gate trips, the answer is to
+  # optimize (wasm-opt -Oz, lazy-loading), not to raise the number.
+  bundle-size:
+    name: Bundle size
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: apps/designer
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo registry & build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      # Prebuilt trunk binary (matches the e2e and web-build jobs).
+      - name: Install trunk
+        uses: taiki-e/install-action@v2
+        with:
+          tool: trunk
+
+      - name: trunk build --release --features web
+        run: trunk build --release --features web
+
+      - name: Enforce 2 MB brotli budget on the WASM bundle
+        run: |
+          command -v brotli > /dev/null || { sudo apt-get update && sudo apt-get install -y brotli; }
+          budget=$((2 * 1024 * 1024))
+          status=0
+          for wasm in dist/*_bg.wasm; do
+            brotli -q 11 --keep "$wasm"
+            size=$(stat -c %s "${wasm}.br")
+            echo "$(basename "$wasm"): ${size} bytes brotli-compressed (budget: ${budget} bytes)"
+            if [ "$size" -gt "$budget" ]; then
+              echo "::error file=${wasm}::compressed WASM bundle is ${size} bytes, over the ${budget}-byte (2 MB brotli) budget set by ADR-0002"
+              status=1
+            fi
+          done
+          exit "$status"
+
   # ── Feature isolation ──────────────────────────────────────────────────────
   # ADR-0002 requires the `web` feature stay namespaced to the frontend crate
   # and inert in native builds. Fail if `web` is pulled into the default build

@@ -1,0 +1,101 @@
+name: Deploy main preview
+
+# Publishes the ADR-0002 web preview bundle to `gh-pages:/main/`, served at
+# https://wpm.github.io/Mathdoku/main/. PR previews live in sibling `/pr-N/`
+# directories (see pr-preview.yml); `keep_files: true` keeps this deploy from
+# wiping them.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  deployments: write
+
+# Serialize pushes to gh-pages from this workflow; a half-pruned /main/ should
+# never race a concurrent redeploy.
+concurrency: deploy-main
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  deploy:
+    name: Deploy /main/
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo registry & build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      # Prebuilt trunk binary (matches the e2e and web-build jobs in ci.yml).
+      - name: Install trunk
+        uses: taiki-e/install-action@v2
+        with:
+          tool: trunk
+
+      # `--public-url` makes the generated index.html reference its
+      # content-hashed .js/.wasm assets under /Mathdoku/main/.
+      - name: trunk build --release --features web
+        working-directory: apps/designer
+        run: trunk build --release --features web --public-url /Mathdoku/main/
+
+      # Trunk's content-hashed filenames change on every build, and
+      # `keep_files: true` below never deletes anything — so without this
+      # prune step orphaned assets accumulate in /main/ on every push.
+      - name: Prune stale /main/ from gh-pages
+        run: |
+          if ! git ls-remote --exit-code origin gh-pages > /dev/null; then
+            echo "gh-pages branch does not exist yet; nothing to prune"
+            exit 0
+          fi
+          git fetch origin gh-pages
+          git worktree add ../gh-pages origin/gh-pages
+          cd ../gh-pages
+          if [ -d main ]; then
+            git rm -r --quiet main
+            git -c user.name="github-actions[bot]" \
+                -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+                commit -m "Prune main/ ahead of redeploy"
+            git push origin HEAD:gh-pages
+          else
+            echo "no main/ directory on gh-pages; nothing to prune"
+          fi
+
+      # `keep_files: true` is what stops this deploy from wiping the live
+      # /pr-N/ previews (and, later, the Phase 7 website at the root).
+      - name: Publish to gh-pages /main/
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: apps/designer/dist
+          destination_dir: main
+          keep_files: true
+
+      # Register a GitHub Deployment so `main` shows up in the repo's
+      # Environments sidebar alongside the per-PR previews.
+      - name: Register GitHub Deployment (main environment)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          deployment_id=$(jq -n --arg ref "$GITHUB_SHA" \
+            '{ref: $ref, environment: "main", auto_merge: false,
+              required_contexts: [],
+              description: "Web preview at /Mathdoku/main/"}' \
+            | gh api "repos/${{ github.repository }}/deployments" \
+                --input - --jq '.id')
+          gh api "repos/${{ github.repository }}/deployments/${deployment_id}/statuses" \
+            -f state=success \
+            -f environment_url="https://wpm.github.io/Mathdoku/main/" \
+            -f log_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            > /dev/null
+          echo "registered deployment ${deployment_id} for environment 'main'"

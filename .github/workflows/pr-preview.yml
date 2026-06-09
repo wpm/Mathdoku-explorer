@@ -1,0 +1,110 @@
+name: PR preview
+
+# Publishes a per-PR build of the ADR-0002 web preview to `gh-pages:/pr-N/`,
+# served at https://wpm.github.io/Mathdoku/pr-N/. rossjrw/pr-preview-action
+# handles deploy, sticky comment, and removal-on-close in one workflow
+# (`action: auto` reads the trigger event to decide deploy-vs-remove).
+#
+# Fork PRs no-op here: GitHub gives `pull_request`-triggered workflows a
+# read-only GITHUB_TOKEN for forks, and `pull_request_target` is not worth
+# its risk for a single-maintainer repo. The bundle-size job in ci.yml — the
+# part that actually gates merge — still runs on fork PRs.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  deployments: write
+
+# One preview deploy per PR at a time; a remove must not race a redeploy.
+concurrency: pr-preview-${{ github.event.pull_request.number }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  preview:
+    name: Deploy /pr-${{ github.event.pull_request.number }}/
+    runs-on: ubuntu-latest
+    # Skip fork PRs cleanly instead of failing on the read-only token.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Build steps are skipped on `closed` — removal needs no bundle.
+      - name: Install stable toolchain
+        if: github.event.action != 'closed'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache cargo registry & build artifacts
+        if: github.event.action != 'closed'
+        uses: Swatinem/rust-cache@v2
+
+      # Prebuilt trunk binary (matches the e2e and web-build jobs in ci.yml).
+      - name: Install trunk
+        if: github.event.action != 'closed'
+        uses: taiki-e/install-action@v2
+        with:
+          tool: trunk
+
+      # `--public-url` makes the generated index.html reference its
+      # content-hashed .js/.wasm assets under /Mathdoku/pr-N/.
+      - name: trunk build --release --features web
+        if: github.event.action != 'closed'
+        working-directory: apps/designer
+        run: trunk build --release --features web --public-url "/Mathdoku/pr-${{ github.event.pull_request.number }}/"
+
+      # `umbrella-dir: .` puts previews at gh-pages:/pr-N/ (no extra nesting),
+      # matching the /Mathdoku/pr-N/ public URL above.
+      - name: Deploy preview to gh-pages
+        uses: rossjrw/pr-preview-action@v1
+        with:
+          source-dir: apps/designer/dist
+          preview-branch: gh-pages
+          umbrella-dir: .
+          action: auto
+
+      # rossjrw/pr-preview-action@v1 has no GitHub Deployments support, so the
+      # pr-N environment entries in the repo's Environments sidebar are
+      # registered by hand, mirroring deploy-main.yml.
+      - name: Register GitHub Deployment (pr-N environment)
+        if: github.event.action != 'closed'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ENV_NAME: pr-${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          deployment_id=$(jq -n --arg ref "$HEAD_SHA" --arg env "$ENV_NAME" \
+            '{ref: $ref, environment: $env, auto_merge: false,
+              required_contexts: [], transient_environment: true,
+              description: "PR web preview"}' \
+            | gh api "repos/${{ github.repository }}/deployments" \
+                --input - --jq '.id')
+          gh api "repos/${{ github.repository }}/deployments/${deployment_id}/statuses" \
+            -f state=success \
+            -f environment_url="https://wpm.github.io/Mathdoku/${ENV_NAME}/" \
+            -f log_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            > /dev/null
+          echo "registered deployment ${deployment_id} for environment '${ENV_NAME}'"
+
+      # Deployments must be inactive before the API will delete them; deleting
+      # them is what keeps closed PRs from lingering in the Environments
+      # sidebar (GITHUB_TOKEN cannot delete the environment itself).
+      - name: Deactivate GitHub Deployments (closed PR)
+        if: github.event.action == 'closed'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ENV_NAME: pr-${{ github.event.pull_request.number }}
+        run: |
+          for id in $(gh api "repos/${{ github.repository }}/deployments?environment=${ENV_NAME}&per_page=100" --jq '.[].id'); do
+            gh api "repos/${{ github.repository }}/deployments/${id}/statuses" \
+              -f state=inactive > /dev/null
+            gh api -X DELETE "repos/${{ github.repository }}/deployments/${id}"
+            echo "deactivated and deleted deployment ${id}"
+          done
