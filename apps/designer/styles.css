@@ -120,6 +120,10 @@ a:hover {
   width: var(--grid-size);
   height: auto;
   aspect-ratio: 1 / 1;
+  /* SVG clips at its viewport by default; the operation selector is anchored
+     to a cage's anchor cell and must be able to overhang the puzzle edge
+     rather than be cut off (issue #95). */
+  overflow: visible;
 }
 
 .solution-count {
