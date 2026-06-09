@@ -1,11 +1,6 @@
+/* The --paper-* and --font-* brand tokens live in site/theme.css, shared
+   with the website and loaded before this file via index.html. */
 :root {
-  --paper-bg: #f4efe6;
-  --paper-ink: #26221b;
-  --paper-ink-2: #5c564a;
-  --paper-ink-3: #8b8476;
-  --paper-line: #b9ad93;
-  --paper-accent: #1a4e7a;
-
   --flash-duration: 300ms;
   --flash-removed-color: var(--c-warning, #c0392b);
   --flash-added-glow: var(--c-accent, #1f77b4);
@@ -13,7 +8,7 @@
   --chrome-height: 8.25rem;
   --grid-size: min(calc(100vw - 3rem), calc(100vh - var(--chrome-height)));
 
-  font-family: "Inter", system-ui, sans-serif;
+  font-family: var(--font-sans);
   font-size: 16px;
   line-height: 1.5;
   color: var(--paper-ink);
@@ -38,7 +33,7 @@ body {
 h1,
 h2,
 h3 {
-  font-family: "Fraunces", Georgia, serif;
+  font-family: var(--font-serif);
   color: var(--paper-ink);
 }
 
@@ -85,7 +80,7 @@ a:hover {
   padding: 2rem 1.5rem;
   min-height: 100vh;
   box-sizing: border-box;
-  font-family: "Inter", system-ui, sans-serif;
+  font-family: var(--font-sans);
   color: var(--paper-ink-2);
 }
 

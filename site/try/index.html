@@ -2,15 +2,21 @@
 <!--
   The /try iframe shell from ADR-0002. The shell owns the page chrome; the
   iframe owns the canvas, pointed at the canonical web build deployed by
-  .github/workflows/deploy-main.yml. Phase 7's website will either point its
-  /try page at this file or replace it — either way the markup stays this
-  small, which is why there is no CSS framework here.
+  .github/workflows/deploy-main.yml. The markup stays this small on purpose,
+  which is why there is no CSS framework here.
 -->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Try Mathdoku Designer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap"
+    />
+    <link rel="stylesheet" href="../theme.css" />
     <style>
       html,
       body {
@@ -20,20 +26,32 @@
       body {
         display: flex;
         flex-direction: column;
-        font-family: system-ui, sans-serif;
+        font-family: var(--font-sans);
+        background-color: var(--paper-bg);
+        color: var(--paper-ink);
       }
       header {
         padding: 0.5rem 1rem;
-        border-bottom: 1px solid #ccc;
+        border-bottom: 1px solid var(--paper-line);
       }
       header h1 {
         display: inline;
+        font-family: var(--font-serif);
         font-size: 1.2rem;
+        font-weight: 700;
         margin: 0 1rem 0 0;
+      }
+      header h1 a {
+        color: var(--paper-ink);
+        text-decoration: none;
+      }
+      header h1 a:hover {
+        color: var(--paper-accent);
       }
       .banner {
         display: inline;
         font-style: italic;
+        color: var(--paper-ink-2);
       }
       iframe {
         flex: 1;
@@ -44,11 +62,10 @@
   </head>
   <body>
     <header>
-      <h1>Mathdoku Designer</h1>
+      <h1><a href="../">Mathdoku</a></h1>
       <p class="banner">
         Ephemeral demo — install the app to save what you make.
       </p>
-      <a href="https://github.com/wpm/Mathdoku">Mathdoku on GitHub</a>
     </header>
     <!--
       allow-scripts: the WASM bundle is JavaScript-bootstrapped.
@@ -57,7 +74,7 @@
     -->
     <iframe
       src="https://wpm.github.io/Mathdoku/main/"
-      title="Mathdoku Designer web preview"
+      title="Mathdoku Designer web demo"
       sandbox="allow-scripts allow-same-origin"
     ></iframe>
   </body>

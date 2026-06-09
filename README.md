@@ -3,8 +3,7 @@
 [![CI](https://github.com/wpm/Mathdoku/actions/workflows/ci.yml/badge.svg)](https://github.com/wpm/Mathdoku/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/wpm/Mathdoku/branch/main/graph/badge.svg)](https://codecov.io/gh/wpm/Mathdoku)
 
-A Rust workspace for generating, solving, and designing
-[Mathdoku](https://en.wikipedia.org/wiki/KenKen) (KenKen) puzzles.
+A Rust workspace for generating, solving, and designing Mathdoku puzzles.
 
 > **Want to _play_ Mathdoku?** End-user gameplay documentation will live on the
 > project website (coming soon). This README is for contributors and for

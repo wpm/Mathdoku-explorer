@@ -72,13 +72,23 @@ jobs:
           fi
 
       # `keep_files: true` is what stops this deploy from wiping the live
-      # /pr-N/ previews (and, later, the Phase 7 website at the root).
+      # /pr-N/ previews and the website at the root.
       - name: Publish to gh-pages /main/
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: apps/designer/dist
           destination_dir: main
+          keep_files: true
+
+      # Publish the website (landing page + try/) to the gh-pages root.
+      # Site filenames are stable (no content hashing), so no prune step is
+      # needed; keep_files preserves /main/ and /pr-N/.
+      - name: Publish website to gh-pages root
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: site
           keep_files: true
 
       # Register a GitHub Deployment so `main` shows up in the repo's

@@ -1,0 +1,106 @@
+<!doctype html>
+<!--
+  Mathdoku project landing page (ADR-0002 Phase 7), served from the gh-pages
+  root at https://wpm.github.io/Mathdoku/. Plain HTML/CSS, no generator: the
+  page must stay light, so the live demo lives behind the try/ link (an
+  iframe of the deployed /main/ build) and the hero here is a static
+  screenshot, never an inline WASM embed.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mathdoku</title>
+    <meta
+      name="description"
+      content="Mathdoku Designer re-solves your grid after every edit, so every puzzle you publish is solvable, unique, and fair."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap"
+    />
+    <link rel="stylesheet" href="theme.css" />
+    <link rel="stylesheet" href="site.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <span class="brand">Mathdoku</span>
+      <nav>
+        <a href="https://github.com/wpm/Mathdoku">GitHub</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <h1>Design Mathdoku puzzles with a solver looking over your shoulder</h1>
+        <p class="lede">
+          Mathdoku Designer re-solves your grid after every edit. Draw cages,
+          set targets, place givens &mdash; and watch the surviving candidates
+          update live, so every puzzle you publish is solvable, unique, and
+          fair.
+        </p>
+        <p class="cta">
+          <a class="cta-button" href="try/">Try it in your browser</a>
+        </p>
+        <p class="cta-note">
+          No install &mdash; the demo runs entirely in your browser.
+        </p>
+      </section>
+
+      <figure class="screenshot">
+        <img
+          src="assets/designer.png"
+          width="832"
+          height="872"
+          alt="Mathdoku Designer showing a 7×7 puzzle in progress: cages with arithmetic targets, candidate marks in every open cell, and a count of remaining multisets and tuples."
+        />
+      </figure>
+
+      <section class="features">
+        <div class="feature">
+          <h2>Live feasibility</h2>
+          <p>
+            Every change re-solves the puzzle. Candidate marks show what can
+            still go in each cell, and counts of the remaining multisets and
+            tuples show how constrained each cage really is.
+          </p>
+        </div>
+        <div class="feature">
+          <h2>Author, don&rsquo;t guess</h2>
+          <p>
+            No more solving by hand to check your work. The Designer tells you
+            the moment a puzzle becomes unsolvable &mdash; or stops having a
+            unique solution.
+          </p>
+        </div>
+        <div class="feature">
+          <h2>Fast, native, yours</h2>
+          <p>
+            A Rust solving engine at the core, in your browser or on your
+            desktop. Desktop downloads are coming soon.
+          </p>
+        </div>
+      </section>
+
+      <section class="explainer">
+        <h2>New to Mathdoku?</h2>
+        <p>
+          A Mathdoku is an arithmetic grid puzzle. Fill the grid so that no
+          number repeats in any row or column, while the numbers in each
+          outlined cage combine &mdash; by addition, subtraction,
+          multiplication, or division &mdash; to hit the cage&rsquo;s target.
+        </p>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <p>
+        &copy; 2026 W.P. McNeill &middot;
+        <a href="https://github.com/wpm/Mathdoku">Source on GitHub</a> &middot;
+        <a href="https://github.com/wpm/Mathdoku/blob/main/LICENSE">MIT license</a>
+      </p>
+    </footer>
+  </body>
+</html>
