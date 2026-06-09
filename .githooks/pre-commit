@@ -37,4 +37,10 @@ echo "==> mathdoku-designer checks"
   cargo clippy --all-targets 2>&1 && \
   cargo test 2>&1)
 
+echo "==> e2e format + lint"
+(cd apps/designer/e2e && \
+  npm run format 2>&1 && \
+  npm run lint 2>&1)
+git add -u
+
 echo "==> Pre-commit checks passed"

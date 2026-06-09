@@ -87,7 +87,7 @@ mod tests {
     //! Each test re-seeds the puzzle through `ipc::new_empty` first, since the
     //! thread-local is shared across tests on the single wasm thread.
 
-    use mathdoku::{Cell, Operator};
+    use mathdoku::{Cell, Operator, Polyomino};
     use mathdoku_designer_core::{apply_loaded, serialize_save};
     use wasm_bindgen_test::{wasm_bindgen_test, wasm_bindgen_test_configure};
 
@@ -111,13 +111,10 @@ mod tests {
         // into the same `AppState`.
         let _ = ipc::new_empty(4).await.unwrap();
         ipc::set_active_cell(Cell::new(1, 2)).await.unwrap();
-        let state = ipc::insert_cage(
-            vec![Cell::new(0, 0), Cell::new(0, 1)],
-            Operator::Add,
-            Some(3),
-        )
-        .await
-        .unwrap();
+        let poly = Polyomino::from_cells(&[Cell::new(0, 0), Cell::new(0, 1)]).unwrap();
+        let state = ipc::insert_cage(poly, Operator::Add, Some(3))
+            .await
+            .unwrap();
         assert_eq!(state.puzzle.cages().count(), 1);
 
         // The selection and the new cage are both visible through a later read.
@@ -129,13 +126,10 @@ mod tests {
     #[wasm_bindgen_test]
     async fn store_survives_save_load_round_trip() {
         let _ = ipc::new_empty(4).await.unwrap();
-        let _ = ipc::insert_cage(
-            vec![Cell::new(0, 0), Cell::new(0, 1)],
-            Operator::Add,
-            Some(3),
-        )
-        .await
-        .unwrap();
+        let poly = Polyomino::from_cells(&[Cell::new(0, 0), Cell::new(0, 1)]).unwrap();
+        let _ = ipc::insert_cage(poly, Operator::Add, Some(3))
+            .await
+            .unwrap();
 
         // Serialize out of the store, then load straight back into it.
         let json = with_state(|s| serialize_save(s).unwrap());

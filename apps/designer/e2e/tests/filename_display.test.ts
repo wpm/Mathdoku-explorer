@@ -1,5 +1,10 @@
 import { test, expect } from '@playwright/test';
-import { installTauriStubs, gotoApp, waitForGrid, interceptInvokeCommand } from './helpers';
+import {
+  installTauriStubs,
+  gotoApp,
+  waitForGrid,
+  interceptInvokeCommand,
+} from './helpers';
 
 const EMPTY_3 = { n: 3 };
 const TITLE_CALLS = '__title_calls__';

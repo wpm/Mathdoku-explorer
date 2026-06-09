@@ -79,7 +79,7 @@ struct ActiveArgs {
 #[cfg(not(feature = "web"))]
 #[derive(Serialize)]
 struct InsertCageArgs {
-    cells: Vec<Cell>,
+    polyomino: Polyomino,
     operator: Operator,
     /// `Some` in Without-Solution mode (author-chosen target); `None` in
     /// With-Solution mode (the backend derives the target from the solution).
@@ -235,14 +235,14 @@ pub async fn set_active_cell(active: Cell) -> Result<(), IpcError> {
 
 #[cfg(not(feature = "web"))]
 pub async fn insert_cage(
-    cells: Vec<Cell>,
+    polyomino: Polyomino,
     operator: Operator,
     target: Option<Target>,
 ) -> Result<State, IpcError> {
     call(
         "insert_cage",
         InsertCageArgs {
-            cells,
+            polyomino,
             operator,
             target,
         },
@@ -253,12 +253,12 @@ pub async fn insert_cage(
 #[cfg(feature = "web")]
 // WASM-only: no Tauri command bus on web — call core directly against thread-local state.
 pub async fn insert_cage(
-    cells: Vec<Cell>,
+    polyomino: Polyomino,
     operator: Operator,
     target: Option<Target>,
 ) -> Result<State, IpcError> {
     crate::web_state::with_state_mut(|s| {
-        mathdoku_designer_core::insert_cage(s, &cells, operator, target)
+        mathdoku_designer_core::insert_cage(s, polyomino, operator, target)
     })
     .map_err(|e| IpcError::Command(e.to_string()))
 }

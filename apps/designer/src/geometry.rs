@@ -46,7 +46,8 @@ pub fn anchor(cells: &[Cell]) -> Cell {
 
 fn neighbors(cell: Cell, n: usize) -> impl Iterator<Item = Cell> {
     cell.neighbors_4()
-        .filter(move |c| c.row < n && c.column < n)
+        .into_iter()
+        .filter(move |c| c.row() < n && c.column() < n)
 }
 
 /// Assigns palette colors to cages so adjacent cages get different colors.
@@ -70,7 +71,7 @@ pub fn assign_colors(
     let mut cage_index = vec![vec![None::<usize>; n]; n];
     for (i, cells) in cages.iter().enumerate() {
         for &cell in cells {
-            cage_index[cell.row][cell.column] = Some(i);
+            cage_index[cell.row()][cell.column()] = Some(i);
         }
     }
 
@@ -79,7 +80,7 @@ pub fn assign_colors(
     for (i, cells) in cages.iter().enumerate() {
         for &cell in cells {
             for nb in neighbors(cell, n) {
-                if let Some(j) = cage_index[nb.row][nb.column]
+                if let Some(j) = cage_index[nb.row()][nb.column()]
                     && j != i
                 {
                     adjacency[i].insert(j);
@@ -325,7 +326,7 @@ mod tests {
             for c in 0..n {
                 let Some(a) = cage_index[r][c] else { continue };
                 for nb in neighbors(Cell::new(r, c), n) {
-                    if let Some(b) = cage_index[nb.row][nb.column]
+                    if let Some(b) = cage_index[nb.row()][nb.column()]
                         && a != b
                     {
                         assert_ne!(

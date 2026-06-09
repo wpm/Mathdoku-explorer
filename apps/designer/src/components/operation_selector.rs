@@ -26,7 +26,6 @@ use mathdoku::{Operation, Operator, Polyomino, Target};
 use super::puzzle::InteractionState;
 use crate::feasibility::group_by_operator;
 use crate::geometry::{anchor, origin};
-use crate::partial_solution::PartialSolution;
 use crate::theme::{ACCENT, BG, INK, INK2, LINE, SERIF};
 
 /// Without-Solution dropdown computation state. The set of feasible
@@ -54,19 +53,40 @@ pub fn OperationSelector() -> impl IntoView {
 
         let cell_size = ctx.cell_size;
         let a = anchor(&pending.polyomino.cells());
-        let (x, y) = origin(cell_size, a.row, a.column);
+        let (x, y) = origin(cell_size, a.row(), a.column());
 
-        match pending.feasible {
-            Some(feasible) => without_solution_view(&pending, feasible, cell_size, x, y),
-            None => with_solution_view(&pending, &ctx.partial_solution, cell_size, x, y),
+        if let Some(feasible) = pending.feasible {
+            without_solution_view(&pending, feasible, cell_size, x, y)
+        } else {
+            // Extract solution values for the cage cells so the operator
+            // strip can use the actual solution digits (singletons) for
+            // target derivation and operator filtering, rather than the
+            // puzzle-grid fills which may be multi-value.
+            let solution_vals: Vec<Option<mathdoku::N>> = {
+                let st = ctx.designer_state.get_untracked();
+                pending
+                    .polyomino
+                    .cells()
+                    .iter()
+                    .map(|&cell| {
+                        st.solution.as_ref().and_then(|g| {
+                            g.get(cell).ok().and_then(|f| f.values().first().copied())
+                        })
+                    })
+                    .collect()
+            };
+            with_solution_view(&pending, &solution_vals, cell_size, x, y)
         }
     }
 }
 
 /// With-Solution rendering: operator tabs labelled with the solution-derived target.
+///
+/// `solution_vals` are the fixed Latin-square values for the cage cells, in
+/// polyomino order. All entries are `Some(v)` when a solution is present.
 fn with_solution_view(
     pending: &PendingCommit,
-    partial_solution: &PartialSolution,
+    solution_vals: &[Option<mathdoku::N>],
     cell_size: f64,
     x: f64,
     y: f64,
@@ -83,30 +103,18 @@ fn with_solution_view(
     let pad = 4.0;
     let gap = 2.0;
     let on_commit = pending.on_commit;
-    let polyomino = pending.polyomino.clone();
     let selected_idx = pending.selected_idx;
 
-    // Build (operator, label) pairs. When all cells' values are singletons,
-    // omit any operator for which compute_target returns None (e.g. Divide
-    // on non-divisible values). When values are undetermined, show all
-    // allowed operators with a label of just the operator symbol.
-    let all_determined = polyomino
-        .cells()
-        .iter()
-        .all(|&c| partial_solution.cell_value_singleton(c).is_some());
+    // Build (operator, label) pairs using the known solution values.
+    // Omit any operator for which no valid target exists (e.g. Divide when
+    // the solution values are not exactly divisible).
     let ops: Vec<(Operator, String)> = pending
         .allowed
         .iter()
-        .filter_map(|op| {
-            let target = compute_target(&polyomino, op, partial_solution);
-            if all_determined && target.is_none() {
-                return None; // structurally invalid for these cell values
-            }
-            let label = target.map_or_else(
-                || op.to_string(),
-                |t| Operation::new(op.clone(), t).to_string(),
-            );
-            Some((op.clone(), label))
+        .filter_map(|&op| {
+            let target = compute_target_from_values(op, solution_vals)?;
+            let label = Operation::new(op, target).to_string();
+            Some((op, label))
         })
         .collect();
 
@@ -132,7 +140,7 @@ fn with_solution_view(
                 view! {
                     <g
                         style="cursor:pointer;"
-                        on:click=move |_| on_commit.run((op.clone(), None))
+                        on:click=move |_| on_commit.run((op, None))
                     >
                         <rect
                             x={tab_x} y={tab_y}
@@ -181,7 +189,7 @@ fn without_solution_view(
         FeasibilityState::Ready(pairs) if pairs.is_empty() => empty_message_view(x, y),
         FeasibilityState::Ready(pairs) => picked.get().map_or_else(
             || operator_strip_view(&pairs, picked, selected_idx, tab_w, tab_h, pad, gap, x, y),
-            |op| target_select_view(&pairs, &op, on_commit, tab_w, tab_h, pad, x, y),
+            |op| target_select_view(&pairs, op, on_commit, tab_w, tab_h, pad, x, y),
         ),
     }
 }
@@ -256,7 +264,7 @@ fn operator_strip_view(
                 view! {
                     <g
                         style="cursor:pointer;"
-                        on:click=move |_| { selected_idx.set(0); picked.set(Some(op.clone())); }
+                        on:click=move |_| { selected_idx.set(0); picked.set(Some(op)); }
                     >
                         <rect
                             x={tab_x} y={tab_y} width={tab_w} height={tab_h}
@@ -287,7 +295,7 @@ fn operator_strip_view(
 #[allow(clippy::too_many_arguments)]
 fn target_select_view(
     pairs: &[(Operator, Target)],
-    op: &Operator,
+    op: Operator,
     on_commit: Callback<(Operator, Option<Target>)>,
     tab_w: f64,
     tab_h: f64,
@@ -297,7 +305,7 @@ fn target_select_view(
 ) -> AnyView {
     let options: Vec<_> = pairs
         .iter()
-        .filter(|(o, _)| o == op)
+        .filter(|(o, _)| *o == op)
         .map(|(_, t)| {
             let value = t.to_string();
             let label = value.clone();
@@ -309,7 +317,7 @@ fn target_select_view(
     // The operator symbol is the placeholder. `Given` renders with no symbol, so
     // a singleton's value dropdown shows a blank header rather than a `#`.
     let placeholder = op.to_string();
-    let op_for_change = op.clone();
+    let op_for_change = op;
 
     // Move focus to the dropdown as soon as it mounts.
     let select_ref = NodeRef::<leptos::html::Select>::new();
@@ -334,7 +342,7 @@ fn target_select_view(
                 style=select_style
                 on:change=move |ev| {
                     if let Ok(target) = event_target_value(&ev).parse::<Target>() {
-                        on_commit.run((op_for_change.clone(), Some(target)));
+                        on_commit.run((op_for_change, Some(target)));
                     }
                 }
             >
@@ -366,20 +374,13 @@ pub struct PendingCommit {
     pub picked_operator: RwSignal<Option<Operator>>,
 }
 
-/// Computes the target value for `op` applied to `polyomino`'s cells using the solution
-/// values read from `partial_solution`. Returns `None` if any cell's values are not a singleton.
-fn compute_target(
-    polyomino: &Polyomino,
-    op: &Operator,
-    partial_solution: &PartialSolution,
-) -> Option<u64> {
-    let vals: Vec<u64> = polyomino
-        .cells()
+/// Computes the target value for `op` from a slice of known cell values.
+/// Returns `None` if any value is absent or the operation has no valid target
+/// (e.g. Divide when the values are not exactly divisible).
+fn compute_target_from_values(op: Operator, vals: &[Option<mathdoku::N>]) -> Option<u64> {
+    let vals: Vec<u64> = vals
         .iter()
-        .map(|&cell| {
-            let v = partial_solution.cell_value_singleton(cell)?;
-            Some(u64::from(v))
-        })
+        .map(|v| v.map(u64::from))
         .collect::<Option<Vec<_>>>()?;
 
     Some(match op {
@@ -486,7 +487,7 @@ fn handle_key_without_solution(
                 TAB | ARROW_RIGHT | ARROW_LEFT => step(shift || key == ARROW_LEFT, ops.len()),
                 ENTER => {
                     if let Some(op) = ops.get(pending.selected_idx.get_untracked()) {
-                        pending.picked_operator.set(Some(op.clone()));
+                        pending.picked_operator.set(Some(*op));
                         pending.selected_idx.set(0);
                     }
                 }
@@ -572,7 +573,7 @@ pub fn handle_key(
             true
         }
         ENTER => {
-            let op = pending.allowed[pending.selected_idx.get_untracked()].clone();
+            let op = pending.allowed[pending.selected_idx.get_untracked()];
             pending.on_commit.run((op, None));
             true
         }
@@ -586,9 +587,9 @@ pub fn handle_key(
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
-    use super::{compute_target, key_to_operator};
+    use super::{compute_target_from_values, key_to_operator};
     use crate::partial_solution::PartialSolution;
-    use mathdoku::{Cell, Grid, Operator, Polyomino, Puzzle};
+    use mathdoku::{Cell, Operator, Polyomino, Puzzle};
 
     fn poly(positions: &[(usize, usize)]) -> Polyomino {
         let cells: Vec<Cell> = positions.iter().map(|&(r, c)| Cell::new(r, c)).collect();
@@ -602,16 +603,25 @@ mod tests {
     /// 3 1 2
     /// ```
     fn pinned_3x3() -> PartialSolution {
-        let square = vec![vec![1u8, 2, 3], vec![2, 3, 1], vec![3, 1, 2]];
-        let grid = Grid::from_latin_square(3, &square).unwrap();
+        let square: Vec<Vec<mathdoku::N>> = vec![vec![1, 2, 3], vec![2, 3, 1], vec![3, 1, 2]];
+        let grid = Puzzle::from_latin_square(3, &square).unwrap();
         PartialSolution::new(Puzzle::new(3).unwrap(), grid)
+    }
+
+    fn compute_target(polyomino: &Polyomino, op: Operator, ps: &PartialSolution) -> Option<u64> {
+        let vals: Vec<Option<mathdoku::N>> = polyomino
+            .cells()
+            .iter()
+            .map(|&cell| ps.cell_value_singleton(cell))
+            .collect();
+        compute_target_from_values(op, &vals)
     }
 
     #[test]
     fn compute_target_given_is_first_cell_value() {
         let ps = pinned_3x3();
         assert_eq!(
-            compute_target(&poly(&[(0, 1)]), &Operator::Given, &ps),
+            compute_target(&poly(&[(0, 1)]), Operator::Given, &ps),
             Some(2)
         );
     }
@@ -621,7 +631,7 @@ mod tests {
         let ps = pinned_3x3();
         // (0,0)=1, (0,1)=2, (0,2)=3 → 6
         assert_eq!(
-            compute_target(&poly(&[(0, 0), (0, 1), (0, 2)]), &Operator::Add, &ps),
+            compute_target(&poly(&[(0, 0), (0, 1), (0, 2)]), Operator::Add, &ps),
             Some(6)
         );
     }
@@ -631,7 +641,7 @@ mod tests {
         let ps = pinned_3x3();
         // (1,0)=2, (1,1)=3 → 6
         assert_eq!(
-            compute_target(&poly(&[(1, 0), (1, 1)]), &Operator::Multiply, &ps),
+            compute_target(&poly(&[(1, 0), (1, 1)]), Operator::Multiply, &ps),
             Some(6)
         );
     }
@@ -641,7 +651,7 @@ mod tests {
         let ps = pinned_3x3();
         // (0,0)=1, (0,1)=2 → |1-2| = 1
         assert_eq!(
-            compute_target(&poly(&[(0, 0), (0, 1)]), &Operator::Subtract, &ps),
+            compute_target(&poly(&[(0, 0), (0, 1)]), Operator::Subtract, &ps),
             Some(1)
         );
     }
@@ -651,19 +661,19 @@ mod tests {
         // A 6×6 grid pinning (0,0)=2 and (0,1)=6 so that 6 / 2 = 3.
         // `from_latin_square` validates only the value range and dimensions, so
         // the remaining filler values need not form a real Latin square.
-        let square = vec![
-            vec![2u8, 6, 1, 3, 4, 5],
+        let square: Vec<Vec<mathdoku::N>> = vec![
+            vec![2, 6, 1, 3, 4, 5],
             vec![1, 2, 3, 4, 5, 6],
-            vec![3, 4, 5, 6, 1, 2],
-            vec![4, 5, 6, 1, 2, 3],
-            vec![5, 6, 1, 2, 3, 4],
-            vec![6, 1, 2, 3, 4, 5],
+            vec![3, 1, 5, 6, 2, 4],
+            vec![4, 5, 6, 1, 3, 2],
+            vec![5, 3, 4, 2, 6, 1],
+            vec![6, 4, 2, 5, 1, 3],
         ];
-        let grid = Grid::from_latin_square(6, &square).unwrap();
+        let grid = Puzzle::from_latin_square(6, &square).unwrap();
         let ps = PartialSolution::new(Puzzle::new(6).unwrap(), grid);
         // (0,0)=2, (0,1)=6 → 6/2 = 3
         assert_eq!(
-            compute_target(&poly(&[(0, 0), (0, 1)]), &Operator::Divide, &ps),
+            compute_target(&poly(&[(0, 0), (0, 1)]), Operator::Divide, &ps),
             Some(3)
         );
     }
@@ -673,19 +683,35 @@ mod tests {
         let ps = pinned_3x3();
         // (0,1)=2, (0,2)=3 → 3 not divisible by 2 → None
         assert_eq!(
-            compute_target(&poly(&[(0, 1), (0, 2)]), &Operator::Divide, &ps),
+            compute_target(&poly(&[(0, 1), (0, 2)]), Operator::Divide, &ps),
             None
+        );
+    }
+
+    #[test]
+    fn compute_target_from_values_divide_none_for_relatively_prime_pair() {
+        // 2 and 3 are relatively prime: 3 is not an integer multiple of 2.
+        // Divide must be suppressed so the operator never appears in the UI.
+        assert_eq!(
+            compute_target_from_values(Operator::Divide, &[Some(2), Some(3)]),
+            None
+        );
+        assert_eq!(
+            compute_target_from_values(Operator::Divide, &[Some(3), Some(5)]),
+            None
+        );
+        // Exactly-divisible pairs do produce a target.
+        assert_eq!(
+            compute_target_from_values(Operator::Divide, &[Some(2), Some(6)]),
+            Some(3)
         );
     }
 
     #[test]
     fn compute_target_none_when_values_not_singleton() {
         // Unconstrained grid: every cell's values are {1,2,3}, not a singleton.
-        let ps = PartialSolution::new(Puzzle::new(3).unwrap(), Grid::new(3).unwrap());
-        assert_eq!(
-            compute_target(&poly(&[(0, 0)]), &Operator::Given, &ps),
-            None
-        );
+        let ps = PartialSolution::new(Puzzle::new(3).unwrap(), Puzzle::new(3).unwrap());
+        assert_eq!(compute_target(&poly(&[(0, 0)]), Operator::Given, &ps), None);
     }
 
     #[test]

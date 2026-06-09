@@ -6,13 +6,11 @@
 //! squares", *Journal of Combinatorial Designs* 4(6), 1996, pp. 405–437.
 
 #![allow(
-    clippy::many_single_char_names,   // r/c/v/i/j/k are conventional for Latin-square indices
-    clippy::cast_possible_truncation, // v+1 <= n <= 9 always fits in N (u8)
+    clippy::many_single_char_names, // r/c/v/i/j/k are conventional for Latin-square indices
 )]
 
+use crate::N;
 use rand::{Rng, RngExt};
-
-use crate::cell::Value;
 
 /// Returns a uniformly random index `x` in `0..n` such that `line(x) == 1`.
 /// In a proper state each line has exactly one such entry; in an improper state
@@ -48,7 +46,7 @@ fn pick_one_from_line(rng: &mut impl Rng, n: usize, line: impl Fn(usize) -> i8) 
 /// Reference: Mark T. Jacobson and Peter Matthews, "Generating uniformly
 /// distributed random Latin squares", *Journal of Combinatorial Designs* 4(6),
 /// 1996, pp. 405–437.
-pub fn generate_latin_square(n: usize, rng: &mut impl Rng) -> Vec<Vec<Value>> {
+pub fn generate_latin_square(n: usize, rng: &mut impl Rng) -> Vec<Vec<N>> {
     // The 1×1 cube has no zero-cell, so the chain's rejection sampler (which
     // needs one) would spin forever. The only 1×1 Latin square is [[1]], so
     // return it directly without starting the chain.
@@ -110,7 +108,11 @@ pub fn generate_latin_square(n: usize, rng: &mut impl Rng) -> Vec<Vec<Value>> {
                 .map(|c| {
                     // The invariant guarantees exactly one 1 per line; this cannot be None.
                     let v = (0..n).position(|v| m[r][c][v] == 1).unwrap_or(0);
-                    (v + 1) as Value
+                    // v+1 <= n <= 9, always fits in N (u8).
+                    #[allow(clippy::cast_possible_truncation)]
+                    {
+                        (v + 1) as N
+                    }
                 })
                 .collect()
         })
@@ -128,16 +130,18 @@ mod tests {
 
     /// Returns true if `ls` is a valid n×n Latin square: each row and each
     /// column contains each value in `1..=n` exactly once.
-    fn validate_latin_square(ls: &[Vec<Value>]) -> bool {
+    fn validate_latin_square(ls: &[Vec<N>]) -> bool {
         let n = ls.len();
-        let expected: HashSet<Value> = (1..=(n as Value)).collect();
+        // n <= 9, always fits in N (u8).
+        #[allow(clippy::cast_possible_truncation)]
+        let expected: HashSet<N> = (1..=(n as N)).collect();
         for row in ls {
-            if row.iter().copied().collect::<HashSet<Value>>() != expected {
+            if row.iter().copied().collect::<HashSet<N>>() != expected {
                 return false;
             }
         }
         for c in 0..n {
-            let col: HashSet<Value> = ls.iter().map(|r| r[c]).collect();
+            let col: HashSet<N> = ls.iter().map(|r| r[c]).collect();
             if col != expected {
                 return false;
             }
@@ -158,14 +162,15 @@ mod tests {
         // chain's rejection sampler. The only 1×1 Latin square is [[1]].
         let mut rng = ChaCha8Rng::seed_from_u64(7);
         let ls = generate_latin_square(1, &mut rng);
-        assert_eq!(ls, vec![vec![1u8]]);
+        let expected: Vec<Vec<N>> = vec![vec![1]];
+        assert_eq!(ls, expected);
         assert!(validate_latin_square(&ls));
     }
 
     #[test]
     fn validate_rejects_invalid() {
         // Row 0 has a duplicate value (two 1s), so this is not a valid Latin square.
-        let ls = vec![vec![1u8, 1, 3], vec![2, 3, 1], vec![3, 2, 2]];
+        let ls: Vec<Vec<N>> = vec![vec![1, 1, 3], vec![2, 3, 1], vec![3, 2, 2]];
         assert!(!validate_latin_square(&ls));
     }
 
@@ -175,7 +180,7 @@ mod tests {
         // of them should appear at least once; tolerance is loose so the test
         // does not flake on rare seeds.
         let mut rng = ChaCha8Rng::seed_from_u64(42);
-        let mut counts: HashMap<Vec<Vec<Value>>, usize> = HashMap::new();
+        let mut counts: HashMap<Vec<Vec<N>>, usize> = HashMap::new();
         for _ in 0..1200 {
             let ls = generate_latin_square(3, &mut rng);
             *counts.entry(ls).or_insert(0) += 1;
@@ -189,7 +194,7 @@ mod tests {
     #[test]
     fn validate_rejects_invalid_column() {
         // Every row is {1,2,3} (a valid permutation), but column 0 is {1,1,1}.
-        let ls = vec![vec![1u8, 2, 3], vec![1, 3, 2], vec![1, 2, 3]];
+        let ls: Vec<Vec<N>> = vec![vec![1, 2, 3], vec![1, 3, 2], vec![1, 2, 3]];
         assert!(!validate_latin_square(&ls));
     }
 }

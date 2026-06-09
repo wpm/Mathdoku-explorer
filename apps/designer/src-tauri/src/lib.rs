@@ -14,7 +14,11 @@ use tauri::image::Image;
 use tauri::menu::{AboutMetadata, Menu, MenuItemBuilder, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Emitter, Manager, Runtime, WindowEvent};
 
-use commands::*;
+use commands::{
+    PuzzleMenu, fix, get_doc_state, get_puzzle, insert_cage, load_puzzle, new_empty,
+    new_latin_square, quit_app, read_recent, remove_cage_at, save_puzzle, set_active_cell,
+    set_puzzle_menu_enabled, set_window_title, unfix,
+};
 
 const EVENT_NEW: &str = "menu-new";
 const EVENT_OPEN: &str = "menu-open";
@@ -132,7 +136,7 @@ fn build_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 /// Builds the Puzzle submenu (Fix / Unfix mode switching).
 ///
 /// Both items are always visible; exactly one is enabled at a time, pushed from
-/// the frontend via [`commands::set_puzzle_menu_enabled`]. The item handles are
+/// the frontend via [`set_puzzle_menu_enabled`]. The item handles are
 /// stashed in app state so that command can reach them to toggle `set_enabled`.
 fn build_puzzle_menu<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Submenu<R>> {
     let fix = MenuItemBuilder::with_id("fix", "Fix Solution")
@@ -208,6 +212,7 @@ fn try_restore<R: Runtime>(app: &AppHandle<R>) -> Option<Puzzle> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 #[allow(clippy::expect_used)]
 pub fn run() {
+    mathdoku::init_debug_logging();
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .manage(Mutex::new(AppState::default()))
@@ -252,7 +257,7 @@ mod tests {
     use serde::Serialize;
     use serde_json::{json, to_string, to_string_pretty};
 
-    use mathdoku::Grid;
+    use mathdoku::Puzzle;
 
     use super::*;
     use commands::{load_puzzle, recent_path, save_puzzle};
@@ -448,7 +453,7 @@ mod tests {
             .unwrap()
             .to_string();
         let puzzle = Puzzle::new(4).unwrap();
-        let solution = Grid::new(4).unwrap();
+        let solution = Puzzle::new(4).unwrap();
         let envelope = SaveEnvelope {
             version: SAVE_VERSION,
             puzzle,

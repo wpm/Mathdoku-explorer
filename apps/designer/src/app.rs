@@ -281,6 +281,7 @@ fn SizeModal(
                             }
                             prop:value=move || chosen.get().to_string()
                         >
+                            <option value="2">"2"</option>
                             <option value="3">"3"</option>
                             <option value="4">"4"</option>
                             <option value="5">"5"</option>
@@ -397,6 +398,11 @@ pub fn App() -> impl IntoView {
     let undo_stack: RwSignal<Vec<State>> = RwSignal::new(Vec::new());
     let redo_stack: RwSignal<Vec<State>> = RwSignal::new(Vec::new());
     let pending_commit: RwSignal<Option<PendingCommit>> = RwSignal::new(None);
+    // After a cage is demoted, the new Puzzle instance reads this signal on
+    // mount and opens its own operation selector for the polyomino. Using a
+    // signal (rather than a Callback from the old Puzzle) ensures the open
+    // happens in the new Puzzle's scope, not the disposed old one.
+    let pending_selector: RwSignal<Option<mathdoku::Polyomino>> = RwSignal::new(None);
 
     // Check if a puzzle was already restored from the recent file on startup.
     // If not, show the Size Modal so the user can create a new puzzle.
@@ -560,21 +566,23 @@ pub fn App() -> impl IntoView {
 
     let on_dismiss_error = Callback::new(move |(): ()| error_msg.set(None));
 
+    // These callbacks are stable for the app's lifetime and must not be
+    // re-created inside the reactive closure below. Puzzle instances capture
+    // them in async closures (demote → commit chains) that outlive the Puzzle
+    // that created them; if the callback were tied to a reactive scope that
+    // gets disposed on re-mount, calling it from a stale async closure would
+    // silently do nothing and the re-mount would never fire.
+    let on_puzzle_change = Callback::new(move |new_st: State| {
+        designer_state.set(Some(new_st));
+    });
+    let on_state_change = Callback::new(move |_new_st: State| {});
+    let on_error = Callback::new(move |msg: String| error_msg.set(Some(msg)));
+
     view! {
         <main class="app-main">
             {ephemeral_banner()}
             {move || designer_state.get().map(|st| {
-            let on_puzzle_change = Callback::new(move |new_st: State| {
-                designer_state.set(Some(new_st));
-            });
-            // Lightweight navigation changes (active cell, provisional cages) are
-            // managed entirely within Puzzle's own designer_state signal.
-            // on_state_change is a no-op here — it exists only so that after a
-            // puzzle re-mount the new instance's initial state is correct (which
-            // on_puzzle_change already handles via the state prop).
-            let on_state_change = Callback::new(move |_new_st: State| {});
-            let on_error = Callback::new(move |msg: String| error_msg.set(Some(msg)));
-            view! { <Puzzle state=st undo_stack=undo_stack redo_stack=redo_stack pending_commit=pending_commit on_puzzle_change=on_puzzle_change on_state_change=on_state_change on_error=on_error /> }
+            view! { <Puzzle state=st undo_stack=undo_stack redo_stack=redo_stack pending_commit=pending_commit pending_selector=pending_selector on_puzzle_change=on_puzzle_change on_state_change=on_state_change on_error=on_error /> }
         })}
             {move || show_size_modal.get().then(|| view! {
                 <SizeModal

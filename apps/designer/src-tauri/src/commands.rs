@@ -189,17 +189,17 @@ pub fn set_window_title<R: Runtime>(title: String, app: AppHandle<R>) -> Result<
 /// Adds a cage to the current puzzle for the given cells and operator.
 ///
 /// # Errors
-/// Returns an error string if no puzzle is loaded, the cells form an invalid polyomino, or
-/// `operator` is not valid for the polyomino size.
+/// Returns an error string if no puzzle is loaded or `operator` is not valid
+/// for the polyomino size.
 #[tauri::command]
 pub fn insert_cage(
-    cells: Vec<Cell>,
+    polyomino: Polyomino,
     operator: Operator,
     target: Option<u64>,
     state: TauriState<Mutex<AppState>>,
 ) -> Result<State, String> {
     let mut s = state.lock().map_err(|e| e.to_string())?;
-    core::insert_cage(&mut s, &cells, operator, target).map_err(|e| e.to_string())
+    core::insert_cage(&mut s, polyomino, operator, target).map_err(|e| e.to_string())
 }
 
 /// Switches the current puzzle from Without-Solution to With-Solution by

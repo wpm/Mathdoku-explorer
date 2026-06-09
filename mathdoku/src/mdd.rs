@@ -1,696 +1,973 @@
-//! Multi-valued Decision Diagram (MDD) representation of cage constraints.
+//! Multivalued Decision Diagram (MDD) implementation of [`Memo`].
 //!
-//! An [`Mdd`] is a reduced, ordered DAG representing exactly the valid [`Tuple`]s
-//! of a cage: one level per cell (in [`Polyomino::cells`] order), edges labelled by
-//! the value placed in that cell, and a single accept terminal that every valid
-//! assignment reaches. Failing paths are simply absent — there is no false terminal.
-//!
-//! [`Mdd::build`] is a single depth-first pass that interleaves the arithmetic and
-//! collinearity (all-different within a shared row or column) constraints into the
-//! search, then hash-conses each node on return. Two nodes at the same level with
-//! identical edge maps are *equivalent* and are merged to one canonical node, so the
-//! result is the unique reduced ordered MDD for the cell ordering. Following Knuth,
-//! "equivalent" denotes this node-merging relation, reserving "isomorphic" for graph
-//! isomorphism.
-//!
-//! [`Mdd::support`] computes per-cell GAC support in `O(|edges|)` via a top-down
-//! reachability sweep followed by a bottom-up co-reachability sweep (MDD-4R), which
-//! is strictly faster than enumerating paths when cages are large.
-//!
-//! ## References
-//!
-//! - Bryant, R. E. (1986). [Graph-Based Algorithms for Boolean Function
-//!   Manipulation](https://www.cs.cmu.edu/~bryant/pubdir/ieeetc86.pdf). *IEEE
-//!   Transactions on Computers*, C-35(8), 677–691. The original reduced ordered BDD
-//!   paper. Establishes that one post-order pass with hash-consing on
-//!   `(variable, sorted (label, child_id))` produces the canonical reduced form, and
-//!   that the reduced form is unique for a fixed variable ordering. The construction
-//!   in [`Mdd::build`] is the multi-valued generalization of Bryant's reduce.
-//! - Srinivasan, A., Ham, T., Malik, S., & Brayton, R. K. (1990). Algorithms for
-//!   discrete function manipulation. *Proceedings of ICCAD 1990*, 92–95. The original
-//!   Multi-valued Decision Diagram paper, extending Bryant's BDD framework from binary
-//!   to multi-valued variables.
-//! - Knuth, D. E. (2011). *The Art of Computer Programming, Volume 4A*, §7.1.4.
-//!   Comprehensive textbook treatment of BDDs. Knuth carefully uses "equivalent" for
-//!   the node-merging relation and reserves "isomorphic" for graph isomorphism —
-//!   this module follows that convention.
-//! - Cheng, K. C. K., & Yap, R. H. C. (2010). [An MDD-based generalized arc
-//!   consistency algorithm for positive and negative table constraints and some global
-//!   constraints](https://www.comp.nus.edu.sg/~ryap/papers/cmdd.pdf). *Constraints*,
-//!   15(2), 265–304. Frames table constraints as MDDs and introduces the MDD-4R
-//!   algorithm used by [`Mdd::support`].
+//! Only commutative (add, multiply) constraints are supported. For non-commutative
+//! constraints (subtract, divide), use `Table` instead.
+use crate::Error::InvalidCellCageIndex;
+use crate::fill::Fill;
+use crate::memo::Memo;
+use crate::operator::CommutativeOperator;
+use crate::{Error, N, T};
+use log::debug;
+use std::collections::{HashMap, HashSet};
 
-// Targets and bounds are compared in `M`; the small `usize` level/remaining counts
-// and the `u32` exponent are widened or narrowed without meaningful loss for n ≤ 9.
-#![allow(clippy::cast_possible_truncation)]
-
-use std::collections::HashMap;
-
-use crate::operation::{Operation, Operator};
-use crate::{Polyomino, Target, Tuple, Value, Values};
-
-/// Index of a node within [`Mdd::nodes`].
-type NodeId = usize;
-
-/// A node in the MDD. The accept terminal is the unique node whose `level` equals
-/// the cage size and whose `edges` are empty; every other node has at least one edge.
-#[derive(Debug, Clone)]
-struct Node {
-    level: usize,
-    edges: Vec<(Value, NodeId)>,
-}
-
-/// A reduced ordered MDD over the valid tuples of a cage.
-#[derive(Debug, Clone)]
+/// A cage constraint stored as a multivalued decision diagram.
+///
+/// Nodes are keyed by `(depth, accumulated_value, used_sets)` where `used_sets`
+/// tracks which values have been placed in each still-open collinear line.
+/// Edges are labelled with the cell value chosen at that depth. Valid tuples
+/// correspond to paths from the root to a terminal node where `value == target`
+/// and `depth == arity`.
+///
+/// Per-position candidate sets ([`Fill`]s) are derived from surviving edge
+/// labels and cached; construction fails with [`EmptyFills`] if no valid
+/// tuples exist.
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Mdd {
-    nodes: Vec<Node>,
-    root: Option<NodeId>,
-    k: usize,
+    n: N,
+    constraint: Constraint,
+    /// Collinear-line metadata: for each depth `d`, which line indices include
+    /// cell `d`, and what the set of depths for each line is.
+    line_meta: LineMeta,
+    edges: HashMap<Node, Vec<(N, Node)>>,
+    fills: Vec<Fill>,
 }
 
 impl Mdd {
-    /// Builds the reduced ordered MDD of all valid tuples for `polyomino` under
-    /// `operation` in an `n`×`n` grid.
+    /// Constructs an MDD for all `k`-tuples of values in `1..=n` satisfying
+    /// `operator` applied to the tuple equals `target`, with the given
+    /// collinear distinctness constraints.
     ///
-    /// Cells are visited in [`Polyomino::cells`] (row-major) order. At each level the
-    /// candidate values `1..=n` are tried in ascending order, pruned by collinearity
-    /// and by the operator's arithmetic bounds before recursing, and the resulting
-    /// node is hash-consed so equivalent subgraphs are shared.
-    #[allow(clippy::needless_pass_by_value)]
-    pub(crate) fn build(n: usize, polyomino: &Polyomino, operation: Operation) -> Self {
-        let cells = polyomino.cells();
-        let k = cells.len();
-        let shares = (0..k)
-            .map(|i| {
-                (0..i)
-                    .filter(|&j| cells[j].row == cells[i].row || cells[j].column == cells[i].column)
-                    .collect()
-            })
-            .collect();
-        let mut builder = Builder {
+    /// `lines` is a list of groups of cell positions (0-indexed depths); cells
+    /// in the same group share a row or column and must hold distinct values.
+    /// Pass an empty slice for arithmetic-only (no collinear constraints).
+    ///
+    /// # Errors
+    /// Returns [`Error::EmptyFills`] if no tuples satisfy the constraint.
+    pub fn new(
+        n: N,
+        k: N,
+        operator: CommutativeOperator,
+        target: T,
+        lines: &[Vec<usize>],
+    ) -> Result<Self, Error> {
+        let constraint = Constraint {
+            operator,
+            target,
+            arity: T::from(k),
+        };
+        let line_meta = LineMeta::new(lines, k as usize);
+        let num_lines = line_meta.num_lines();
+        let root = Node {
+            depth: 0,
+            value: constraint.unit(),
+            used: vec![Fill::default(); num_lines].into_boxed_slice(),
+        };
+        let mut mdd = Self {
             n,
-            k,
-            operator: operation.operator,
-            target: operation.target,
-            shares,
-            nodes: Vec::new(),
-            intern: HashMap::new(),
-            terminal: 0,
+            constraint,
+            line_meta,
+            edges: HashMap::new(),
+            fills: Vec::new(),
         };
-        builder.terminal = builder.intern(k, Vec::new());
-        // Subtract and Divide are binary operators: they relate exactly two cells. A
-        // cage of any other size admits no tuples, matching the reference enumerator
-        // (whose two-element multisets have no length-k permutations for k != 2).
-        let two_cell_only = matches!(builder.operator, Operator::Subtract | Operator::Divide);
-        let root = if two_cell_only && k != 2 {
-            None
-        } else {
-            let init_acc = match builder.operator {
-                Operator::Multiply => 1,
-                _ => 0,
-            };
-            let mut assignment = Vec::with_capacity(k);
-            builder.dfs(0, &mut assignment, init_acc)
-        };
-        Self {
-            nodes: builder.nodes,
-            root,
-            k,
-        }
+        mdd.subtree(&root);
+        mdd.fills = mdd.fills_from_edges()?;
+        Ok(mdd)
     }
 
-    /// Enumerates every valid tuple by walking each root-to-terminal path.
-    pub(crate) fn tuples(&self) -> impl Iterator<Item = Tuple> {
-        let mut out = Vec::new();
-        if let Some(root) = self.root {
-            let mut path = Vec::with_capacity(self.k);
-            self.collect_paths(root, &mut path, &mut out);
-        }
-        out.into_iter()
-    }
-
-    /// Appends to `out` every tuple reachable from the node `id`, extending the
-    /// current `path` along each outgoing edge.
-    fn collect_paths(&self, id: NodeId, path: &mut Tuple, out: &mut Vec<Tuple>) {
-        let node = &self.nodes[id];
-        if node.level == self.k {
-            out.push(path.clone());
+    /// Recursively builds the MDD rooted at `head`, adding edges for all values
+    /// that are not pruned by the constraint's monotonicity bounds or collinear
+    /// distinctness.
+    ///
+    /// An edge is only inserted if the tail node is either a valid terminal
+    /// (`depth == arity` and `value == target`) or itself has outgoing edges.
+    /// This ensures the diagram contains no dead paths.
+    fn subtree(&mut self, head: &Node) {
+        if self.edges.contains_key(head) {
             return;
         }
-        for &(label, child) in &node.edges {
-            path.push(label);
-            self.collect_paths(child, path, out);
-            let _ = path.pop();
-        }
-    }
+        debug!("{self}");
+        let remaining = self.constraint.arity - head.depth - 1;
+        let n_t = T::from(self.n);
+        let depth_idx = head.depth as usize;
+        let lines_at_depth = self.line_meta.lines_at_depth(depth_idx).to_vec();
 
-    /// Computes the per-cell support of the cage under the current cell `values`.
-    ///
-    /// `values` holds one [`Values`] set per cell, in [`Polyomino::cells`] order;
-    /// the returned vector has the same length. Position `i` is the set of values that
-    /// appear at cell `i` in at least one root-to-terminal path every label of which
-    /// lies in its cell's value set. When no such path exists — including when any value
-    /// set is empty — every returned set is empty, so infeasibility propagates.
-    ///
-    /// Runs in `O(|edges|)` via a top-down reachability sweep followed by a bottom-up
-    /// co-reachability sweep (a variant of Perez & Régin's MDD-4R), rather than the
-    /// `O(|paths|)` cost of filtering [`Mdd::tuples`].
-    pub(crate) fn support(&self, values: &[Values]) -> Vec<Values> {
-        debug_assert_eq!(
-            values.len(),
-            self.k,
-            "support expects one value set per cell"
-        );
-        let Some(root) = self.root else {
-            return vec![Values::default(); self.k];
-        };
-
-        // Node ids grouped by level; every edge runs from level `i` to level `i + 1`,
-        // so a single increasing (decreasing) pass settles each sweep.
-        let mut levels: Vec<Vec<NodeId>> = vec![Vec::new(); self.k + 1];
-        for (id, node) in self.nodes.iter().enumerate() {
-            levels[node.level].push(id);
-        }
-
-        // Top-down: the root is reachable, and a node is reachable when some allowed
-        // edge from a reachable node lands on it.
-        let mut reachable = vec![false; self.nodes.len()];
-        reachable[root] = true;
-        for i in 0..self.k {
-            for &u in &levels[i] {
-                if reachable[u] {
-                    for &(label, child) in &self.nodes[u].edges {
-                        if values[i].contains(label) {
-                            reachable[child] = true;
-                        }
-                    }
-                }
+        for v in 1..=self.n {
+            let i = T::from(v);
+            if self.constraint.pruned(head.value, i, remaining) {
+                break;
             }
-        }
-
-        // Bottom-up: the terminal is co-reachable, and a node is co-reachable when some
-        // allowed edge from it lands on a co-reachable node.
-        let mut coreachable = vec![false; self.nodes.len()];
-        for &t in &levels[self.k] {
-            coreachable[t] = true;
-        }
-        for i in (0..self.k).rev() {
-            for &u in &levels[i] {
-                coreachable[u] = self.nodes[u]
-                    .edges
-                    .iter()
-                    .any(|&(label, child)| values[i].contains(label) && coreachable[child]);
-            }
-        }
-
-        // Support: union the label of every edge bridging a reachable node to a
-        // co-reachable node within its cell's value set.
-        let mut support = vec![Values::default(); self.k];
-        for i in 0..self.k {
-            for &u in &levels[i] {
-                if reachable[u] {
-                    for &(label, child) in &self.nodes[u].edges {
-                        if values[i].contains(label) && coreachable[child] {
-                            support[i] = support[i] | Values::singleton(label);
-                        }
-                    }
-                }
-            }
-        }
-        support
-    }
-}
-
-/// Mutable state threaded through the depth-first construction.
-struct Builder {
-    n: usize,
-    k: usize,
-    operator: Operator,
-    target: Target,
-    /// `shares[i]` holds the indices `j < i` of earlier cells sharing a row or
-    /// column with cell `i` — the cells whose values constrain cell `i`.
-    shares: Vec<Vec<usize>>,
-    nodes: Vec<Node>,
-    intern: HashMap<(usize, Vec<(Value, NodeId)>), NodeId>,
-    terminal: NodeId,
-}
-
-impl Builder {
-    /// Interns a node by `(level, sorted edges)`, returning the existing canonical id
-    /// if an equivalent node was already created, or a fresh id otherwise.
-    fn intern(&mut self, level: usize, mut edges: Vec<(Value, NodeId)>) -> NodeId {
-        edges.sort_unstable();
-        let key = (level, edges.clone());
-        if let Some(&id) = self.intern.get(&key) {
-            return id;
-        }
-        let id = self.nodes.len();
-        self.nodes.push(Node { level, edges });
-        let _ = self.intern.insert(key, id);
-        id
-    }
-
-    /// Explores cell `level` given the values already placed in `assignment` and the
-    /// running accumulator `acc` (sum for [`Operator::Add`], product for
-    /// [`Operator::Multiply`]). Returns the canonical node id, or `None` if no value
-    /// leads to the accept terminal ("dead").
-    fn dfs(&mut self, level: usize, assignment: &mut Vec<Value>, acc: Target) -> Option<NodeId> {
-        if level == self.k {
-            return Some(self.terminal);
-        }
-        let mut edges: Vec<(Value, NodeId)> = Vec::new();
-        for v in 1u8..=(self.n as Value) {
-            if self.shares[level].iter().any(|&j| assignment[j] == v) {
+            if self.constraint.skipped(head.value, i, remaining, n_t) {
                 continue;
             }
-            let remaining = self.k - level - 1;
-            let next_acc = match self.operator {
-                Operator::Add => {
-                    let new_sum = acc + Target::from(v);
-                    if new_sum + remaining as Target > self.target {
-                        break; // min reachable total already exceeds the target
-                    }
-                    if new_sum + remaining as Target * (self.n as Target) < self.target {
-                        continue; // max reachable total still below the target
-                    }
-                    new_sum
-                }
-                Operator::Multiply => {
-                    let new_product = acc * Target::from(v);
-                    if new_product > self.target {
-                        break; // product already exceeds the target
-                    }
-                    if !self.target.is_multiple_of(new_product) {
-                        continue; // target is not a multiple of the running product
-                    }
-                    if new_product * (self.n as Target).pow(remaining as u32) < self.target {
-                        continue; // max reachable product still below the target
-                    }
-                    new_product
-                }
-                Operator::Subtract => match assignment.last() {
-                    Some(&first)
-                        if Target::from(first).abs_diff(Target::from(v)) != self.target =>
-                    {
-                        continue;
-                    }
-                    _ => acc,
-                },
-                Operator::Divide => match assignment.last() {
-                    Some(&first)
-                        if Target::from(first) != Target::from(v) * self.target
-                            && Target::from(v) != Target::from(first) * self.target =>
-                    {
-                        continue;
-                    }
-                    _ => acc,
-                },
-                Operator::Given if Target::from(v) != self.target => continue,
-                Operator::Given => acc,
+            // Collinear distinctness: skip v if already used in any open line at this depth.
+            if lines_at_depth
+                .iter()
+                .any(|&(line_idx, _)| head.used[line_idx].contains(v))
+            {
+                continue;
+            }
+
+            let tail_used = self.line_meta.advance_used(&head.used, depth_idx, v);
+            let tail = Node {
+                depth: head.depth + 1,
+                value: self.constraint.operation(head.value, i),
+                used: tail_used,
             };
-            assignment.push(v);
-            let child = self.dfs(level + 1, assignment, next_acc);
-            let _ = assignment.pop();
-            if let Some(child) = child {
-                edges.push((v, child));
+
+            // Recursively build tail's subtree before deciding whether to link it.
+            let tail_is_terminal = self.is_valid_terminal(&tail);
+            let tail_at_arity = self.at_arity(&tail);
+            let tail_at_target = self.at_target(&tail);
+            if !tail_at_target && !tail_at_arity {
+                self.subtree(&tail);
+            }
+
+            // Only insert the edge if tail is live: a valid terminal or has children.
+            let tail_is_live = tail_is_terminal || self.edges.contains_key(&tail);
+            if tail_is_live {
+                self.insert_edge(head.clone(), v, tail);
             }
         }
-        if edges.is_empty() {
-            None
-        } else {
-            Some(self.intern(level, edges))
+    }
+
+    /// Returns true if `node` is a valid accepting terminal: depth equals arity
+    /// and accumulated value equals target.
+    const fn is_valid_terminal(&self, node: &Node) -> bool {
+        node.depth == self.constraint.arity && node.value == self.constraint.target
+    }
+
+    /// Returns a copy of this MDD with edges for forbidden values removed and
+    /// dead nodes garbage-collected via downward and upward cascades.
+    fn remove_support(&self, forbidden: &HashMap<T, HashSet<N>>) -> Self {
+        let mut mdd = Self {
+            n: self.n,
+            constraint: self.constraint,
+            line_meta: self.line_meta.clone(),
+            edges: self.edges.clone(),
+            fills: Vec::new(),
+        };
+        let mut q_down: Vec<Node> = Vec::new(); // nodes that may have lost all incoming edges
+        let mut q_up: Vec<Node> = Vec::new(); // nodes that may have lost all outgoing edges
+
+        for (&depth, forbidden) in forbidden {
+            let heads = mdd.heads_at_depth(depth);
+            let (total_arcs, dead_arcs) = heads
+                .iter()
+                .filter_map(|h| mdd.edges.get(h))
+                .flat_map(|es| es.iter())
+                .fold((0, 0), |(total, dead), (label, _)| {
+                    (total + 1, dead + usize::from(forbidden.contains(label)))
+                });
+
+            if dead_arcs > total_arcs / 2 {
+                debug!("Layer {depth}: reset ({dead_arcs}/{total_arcs} arcs dead)");
+                mdd.reset_layer(&heads, forbidden, &mut q_down, &mut q_up);
+            } else {
+                debug!("Layer {depth}: delete ({dead_arcs}/{total_arcs} arcs dead)");
+                mdd.delete_layer(&heads, forbidden, &mut q_down, &mut q_up);
+            }
         }
+
+        mdd.cascade_down(&mut q_down);
+        mdd.cascade_up(&mut q_up);
+        mdd
+    }
+
+    fn heads_at_depth(&self, depth: T) -> Vec<Node> {
+        self.edges
+            .keys()
+            .filter(|n| n.depth == depth)
+            .cloned()
+            .collect()
+    }
+
+    fn tails_of(edges: &HashMap<Node, Vec<(N, Node)>>, heads: &[Node]) -> HashSet<Node> {
+        heads
+            .iter()
+            .filter_map(|h| edges.get(h))
+            .flat_map(|es| es.iter())
+            .map(|(_, t)| t.clone())
+            .collect()
+    }
+
+    fn reset_layer(
+        &mut self,
+        heads: &[Node],
+        forbidden: &HashSet<N>,
+        q_down: &mut Vec<Node>,
+        q_up: &mut Vec<Node>,
+    ) {
+        let surviving: HashSet<N> = (1..=self.n).filter(|v| !forbidden.contains(v)).collect();
+        let tails_before = Self::tails_of(&self.edges, heads);
+
+        let orig: Vec<(Node, Vec<(N, Node)>)> = heads
+            .iter()
+            .filter_map(|h| self.edges.remove(h).map(|es| (h.clone(), es)))
+            .collect();
+        for (head, orig_edges) in orig {
+            let new_edges: Vec<(N, Node)> = orig_edges
+                .into_iter()
+                .filter(|(label, _)| surviving.contains(label))
+                .collect();
+            if !new_edges.is_empty() {
+                let _ = self.edges.insert(head, new_edges);
+            }
+        }
+
+        let tails_after = Self::tails_of(&self.edges, heads);
+        q_down.extend(
+            tails_before
+                .into_iter()
+                .filter(|t| !tails_after.contains(t)),
+        );
+        q_up.extend(
+            heads
+                .iter()
+                .filter(|h| !self.edges.contains_key(*h))
+                .cloned(),
+        );
+    }
+
+    fn delete_layer(
+        &mut self,
+        heads: &[Node],
+        forbidden: &HashSet<N>,
+        q_down: &mut Vec<Node>,
+        q_up: &mut Vec<Node>,
+    ) {
+        for head in heads {
+            if let Some(es) = self.edges.get_mut(head) {
+                let dead_tails: Vec<Node> = es
+                    .iter()
+                    .filter(|(label, _)| forbidden.contains(label))
+                    .map(|(_, t)| t.clone())
+                    .collect(); // collect before retain to avoid borrow conflict
+                es.retain(|(label, _)| !forbidden.contains(label));
+                if es.is_empty() {
+                    let _ = self.edges.remove(head);
+                    q_up.push(head.clone());
+                }
+                for tail in dead_tails {
+                    let still_reachable = heads.iter().any(|h| {
+                        self.edges
+                            .get(h)
+                            .is_some_and(|es| es.iter().any(|(_, t)| *t == tail))
+                    });
+                    if !still_reachable {
+                        q_down.push(tail);
+                    }
+                }
+            }
+        }
+    }
+
+    fn cascade_down(&mut self, q: &mut Vec<Node>) {
+        while let Some(node) = q.pop() {
+            if !self.edges.contains_key(&node) {
+                continue;
+            }
+            let has_incoming = node.depth > 0
+                && self
+                    .edges
+                    .keys()
+                    .filter(|h| h.depth == node.depth - 1)
+                    .any(|h| self.edges[h].iter().any(|(_, t)| *t == node));
+            if !has_incoming {
+                let outgoing = self.edges.remove(&node).unwrap_or_default();
+                for (_, tail) in outgoing {
+                    q.push(tail);
+                }
+            }
+        }
+    }
+
+    fn cascade_up(&mut self, q: &mut Vec<Node>) {
+        while let Some(node) = q.pop() {
+            if self.edges.contains_key(&node) {
+                continue;
+            }
+            let is_terminal =
+                node.value == self.constraint.target && node.depth == self.constraint.arity;
+            if !is_terminal {
+                let heads: Vec<Node> = self
+                    .edges
+                    .keys()
+                    .filter(|h| h.depth + 1 == node.depth)
+                    .cloned()
+                    .collect();
+                for head in heads {
+                    if let Some(es) = self.edges.get_mut(&head) {
+                        es.retain(|(_, t)| *t != node);
+                        if es.is_empty() {
+                            let head_clone = head.clone();
+                            let _ = self.edges.remove(&head);
+                            q.push(head_clone);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn insert_edge(&mut self, head: Node, value: N, tail: Node) {
+        debug!(
+            "{:indent$}{head} -{value}→ {tail}",
+            "",
+            indent = head.depth as usize
+        );
+        self.edges.entry(head).or_default().push((value, tail));
+    }
+
+    fn at_arity(&self, tail: &Node) -> bool {
+        let (d, a) = (u64::from(tail.depth), u64::from(self.constraint.arity));
+        debug_assert!(d <= a, "depth {d} > arity {a}");
+        Self::log_if(d == a, tail.depth, &format!("{tail} Arity limit met"))
+    }
+
+    fn at_target(&self, node: &Node) -> bool {
+        Self::log_if(
+            self.constraint.target_reached(node.value),
+            node.depth,
+            &format!("{node} Target reached"),
+        )
+    }
+
+    fn log_if(condition: bool, depth: T, message: &str) -> bool {
+        if condition {
+            debug!("{:indent$}{message}", "", indent = depth as usize);
+        }
+        condition
+    }
+
+    /// Derives per-position fills by scanning edge labels at each depth.
+    ///
+    /// Returns `Err(EmptyFills)` if no edges exist at any depth (empty diagram).
+    fn fills_from_edges(&self) -> Result<Vec<Fill>, Error> {
+        let k = self.constraint.arity as usize;
+        if k == 0 {
+            return Err(Error::EmptyFills);
+        }
+        let mut fills = vec![Fill::default(); k];
+        for (node, edges) in &self.edges {
+            let depth = node.depth as usize;
+            if depth < k {
+                for &(label, _) in edges {
+                    fills[depth] = fills[depth] | Fill::singleton(label);
+                }
+            }
+        }
+        if fills.iter().any(|f| f.is_empty()) {
+            return Err(Error::EmptyFills);
+        }
+        Ok(fills)
+    }
+
+    #[allow(dead_code)] // used only in tests to verify MDD contents
+    pub(crate) fn tuples(&self) -> Vec<Vec<N>> {
+        let num_lines = self.line_meta.num_lines();
+        let root = Node {
+            depth: 0,
+            value: self.constraint.unit(),
+            used: vec![Fill::default(); num_lines].into_boxed_slice(),
+        };
+        let mut result = Vec::new();
+        self.collect_paths(&root, &mut Vec::new(), &mut result);
+        result
+    }
+
+    fn collect_paths(&self, head: &Node, path: &mut Vec<N>, result: &mut Vec<Vec<N>>) {
+        match self.edges.get(head) {
+            None => {
+                if head.value == self.constraint.target && head.depth == self.constraint.arity {
+                    result.push(path.clone());
+                }
+            }
+            Some(edges) => {
+                for (label, tail) in edges {
+                    path.push(*label);
+                    self.collect_paths(tail, path, result);
+                    let _ = path.pop();
+                }
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for Mdd {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "MDD({} {} nodes)", self.constraint, self.edges.len())
+    }
+}
+
+impl Memo for Mdd {
+    fn get(&self, index: usize) -> Result<Fill, Error> {
+        self.fills
+            .get(index)
+            .copied()
+            .ok_or(InvalidCellCageIndex(index))
+    }
+
+    fn narrow(&self, support: &[Fill]) -> Result<Self, Error> {
+        let forbidden: HashMap<T, HashSet<N>> = support
+            .iter()
+            .enumerate()
+            .filter_map(|(i, fill)| {
+                let excluded: HashSet<N> = (1..=self.n).filter(|v| !fill.contains(*v)).collect();
+                if excluded.is_empty() {
+                    None
+                } else {
+                    // i is a cage position index, bounded by k <= 9.
+                    #[allow(clippy::cast_possible_truncation)]
+                    Some((T::from(i as N), excluded))
+                }
+            })
+            .collect();
+        let mut narrowed = self.remove_support(&forbidden);
+        narrowed.fills = narrowed.fills_from_edges()?;
+        Ok(narrowed)
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+struct Constraint {
+    // TODO Can this be ArithmeticConstraint?
+    operator: CommutativeOperator,
+    target: T,
+    arity: T,
+}
+
+impl Constraint {
+    const fn target_reached(self, v: T) -> bool {
+        match self.operator {
+            CommutativeOperator::Add => v >= self.target,
+            CommutativeOperator::Multiply => v > self.target,
+        }
+    }
+
+    const fn pruned(self, acc: T, v: T, _remaining: T) -> bool {
+        match self.operator {
+            CommutativeOperator::Add => acc + v > self.target,
+            CommutativeOperator::Multiply => acc * v > self.target,
+        }
+    }
+
+    const fn skipped(self, acc: T, v: T, remaining: T, n: T) -> bool {
+        match self.operator {
+            CommutativeOperator::Add => acc + v + remaining * n < self.target,
+            CommutativeOperator::Multiply => (acc * v) != 0 && !self.target.is_multiple_of(acc * v),
+        }
+    }
+
+    const fn operation(self, x: T, y: T) -> T {
+        self.operator.apply_to_pair(x, y)
+    }
+
+    const fn unit(self) -> T {
+        self.operator.identity()
+    }
+}
+
+impl std::fmt::Display for Constraint {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let symbol = match self.operator {
+            CommutativeOperator::Add => '+',
+            CommutativeOperator::Multiply => '×',
+        };
+        write!(f, "{symbol}{} [{}]", self.target, self.arity)
+    }
+}
+
+/// Precomputed collinear-line metadata for MDD construction.
+///
+/// For each depth (cell position in polyomino order), stores which line indices
+/// that depth belongs to and whether the line closes at that depth.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct LineMeta {
+    /// For each depth: list of `(line_idx, is_last_in_line)` pairs.
+    depth_info: Vec<Vec<(usize, bool)>>,
+    num_lines: usize,
+}
+
+impl LineMeta {
+    fn new(lines: &[Vec<usize>], k: usize) -> Self {
+        let num_lines = lines.len();
+        let mut depth_info: Vec<Vec<(usize, bool)>> = vec![Vec::new(); k];
+        for (line_idx, line) in lines.iter().enumerate() {
+            let last_depth = line.iter().copied().max().unwrap_or(0);
+            for &depth in line {
+                depth_info[depth].push((line_idx, depth == last_depth));
+            }
+        }
+        Self {
+            depth_info,
+            num_lines,
+        }
+    }
+
+    const fn num_lines(&self) -> usize {
+        self.num_lines
+    }
+
+    fn lines_at_depth(&self, depth: usize) -> &[(usize, bool)] {
+        self.depth_info.get(depth).map_or(&[], Vec::as_slice)
+    }
+
+    /// Returns the updated `used` sets after placing `value` at `depth`.
+    ///
+    /// Adds `value` to each line containing `depth`, then zeroes out lines
+    /// that close at `depth` (all their cells have been placed).
+    fn advance_used(&self, used: &[Fill], depth: usize, value: N) -> Box<[Fill]> {
+        let mut next = used.to_vec();
+        for &(line_idx, closes) in self.lines_at_depth(depth) {
+            next[line_idx] = next[line_idx] | Fill::singleton(value);
+            if closes {
+                next[line_idx] = Fill::default();
+            }
+        }
+        next.into_boxed_slice()
+    }
+}
+
+#[derive(Eq, PartialEq, Hash, Debug, Clone)]
+struct Node {
+    depth: T,
+    value: T,
+    /// Used-value sets for still-open collinear lines (indexed by line index).
+    /// Closed lines are zeroed out so that they don't inflate the key space.
+    /// `Fill` doubles as a compact bitset (u16) for tracking which values have
+    /// been placed in a line; its bitmap operations serve set-membership here,
+    /// not candidate-fill semantics.
+    used: Box<[Fill]>,
+}
+
+impl std::fmt::Display for Node {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Node({} @ level {})", self.value, self.depth)
     }
 }
 
 #[cfg(test)]
-#[allow(clippy::cast_possible_truncation)]
 mod tests {
-    use std::collections::HashSet;
-
-    use rand::{RngExt, SeedableRng};
-    use rand_chacha::ChaCha8Rng;
-
     use super::*;
-    use crate::operation::operators_for;
-    use crate::test_utils::{cells, col_pair, l_shape, pair, singleton};
+    use crate::Error::EmptyFills;
+    use crate::operator::CommutativeOperator::{Add, Multiply};
+    use std::sync::OnceLock;
 
-    impl Mdd {
-        const fn is_feasible(&self) -> bool {
-            self.root.is_some()
+    static LOGGING: OnceLock<()> = OnceLock::new();
+    fn setup() {
+        let () = *LOGGING.get_or_init(crate::init_debug_logging);
+    }
+
+    fn no_lines() -> Vec<Vec<usize>> {
+        vec![]
+    }
+
+    // ---- get ----
+
+    #[test]
+    fn add_fills_are_union_of_column_values() {
+        setup();
+        let m = Mdd::new(4, 2, Add, 6, &no_lines()).unwrap();
+        assert_eq!(m.get(0).unwrap(), Fill::from(&[2, 3, 4]));
+        assert_eq!(m.get(1).unwrap(), Fill::from(&[2, 3, 4]));
+    }
+
+    #[test]
+    fn multiply_fills_contain_expected_values() {
+        setup();
+        let m = Mdd::new(6, 2, Multiply, 6, &no_lines()).unwrap();
+        assert_eq!(m.get(0).unwrap(), Fill::from(&[1, 2, 3, 6]));
+        assert_eq!(m.get(1).unwrap(), Fill::from(&[1, 2, 3, 6]));
+    }
+
+    #[test]
+    fn commutative_no_solutions_returns_empty_fills_error() {
+        setup();
+        assert!(matches!(
+            Mdd::new(4, 2, Add, 9, &no_lines()),
+            Err(EmptyFills)
+        ));
+    }
+
+    #[test]
+    fn fill_out_of_bounds_returns_index_error() {
+        setup();
+        let m = Mdd::new(4, 2, Add, 5, &no_lines()).unwrap();
+        assert!(matches!(m.get(2), Err(InvalidCellCageIndex(2))));
+    }
+
+    // ---- narrow ----
+
+    #[test]
+    fn narrow_with_full_support_is_identity() {
+        setup();
+        let m = Mdd::new(4, 2, Add, 5, &no_lines()).unwrap();
+        assert_eq!(m.narrow(&[Fill::all(4), Fill::all(4)]).unwrap(), m);
+    }
+
+    #[test]
+    fn narrow_filters_tuples_and_updates_fills() {
+        setup();
+        // add to 5 in n=4: (1,4),(2,3),(3,2),(4,1)
+        // restrict pos 0 to {1,2} → surviving: (1,4),(2,3)
+        let m = Mdd::new(4, 2, Add, 5, &no_lines()).unwrap();
+        let narrowed = m
+            .narrow(&[Fill::from(&[1, 2]), Fill::from(&[1, 2, 3, 4])])
+            .unwrap();
+        assert_eq!(narrowed.get(0).unwrap(), Fill::from(&[1, 2]));
+        assert_eq!(narrowed.get(1).unwrap(), Fill::from(&[3, 4]));
+    }
+
+    #[test]
+    fn narrow_eliminating_all_tuples_returns_empty_fills_error() {
+        setup();
+        let m = Mdd::new(4, 2, Add, 5, &no_lines()).unwrap();
+        assert!(matches!(
+            m.narrow(&[Fill::from(&[1]), Fill::from(&[1])]),
+            Err(EmptyFills)
+        ));
+    }
+
+    // ---- reset ----
+
+    // ---- display ----
+
+    #[test]
+    fn sum_pair_display() {
+        setup();
+        assert_eq!(
+            Mdd::new(3, 2, Add, 4, &no_lines()).unwrap().to_string(),
+            "MDD(+4 [2] 4 nodes)"
+        );
+    }
+
+    #[test]
+    fn sum_triple_display() {
+        setup();
+        assert_eq!(
+            Mdd::new(3, 3, Add, 5, &no_lines()).unwrap().to_string(),
+            "MDD(+5 [3] 7 nodes)"
+        );
+    }
+
+    #[test]
+    fn sum_triple_larger_n_display() {
+        setup();
+        assert_eq!(
+            Mdd::new(4, 3, Add, 6, &no_lines()).unwrap().to_string(),
+            "MDD(+6 [3] 9 nodes)"
+        );
+    }
+
+    #[test]
+    fn product_pair_display() {
+        setup();
+        assert_eq!(
+            Mdd::new(4, 2, Multiply, 6, &no_lines())
+                .unwrap()
+                .to_string(),
+            "MDD(×6 [2] 3 nodes)"
+        );
+    }
+
+    #[test]
+    fn product_triple_display() {
+        setup();
+        assert_eq!(
+            Mdd::new(4, 3, Multiply, 4, &no_lines())
+                .unwrap()
+                .to_string(),
+            "MDD(×4 [3] 7 nodes)"
+        );
+    }
+
+    // ---- fill values ----
+
+    #[test]
+    fn sum_pair_fills() {
+        setup();
+        let m = Mdd::new(3, 2, Add, 4, &no_lines()).unwrap();
+        assert_eq!(m.get(0).unwrap(), Fill::from(&[1, 2, 3]));
+        assert_eq!(m.get(1).unwrap(), Fill::from(&[1, 2, 3]));
+    }
+
+    #[test]
+    fn sum_triple_fills() {
+        setup();
+        let m = Mdd::new(3, 3, Add, 5, &no_lines()).unwrap();
+        assert_eq!(m.get(0).unwrap(), Fill::from(&[1, 2, 3]));
+        assert_eq!(m.get(1).unwrap(), Fill::from(&[1, 2, 3]));
+        assert_eq!(m.get(2).unwrap(), Fill::from(&[1, 2, 3]));
+    }
+
+    #[test]
+    fn product_pair_fills() {
+        setup();
+        let m = Mdd::new(4, 2, Multiply, 6, &no_lines()).unwrap();
+        assert_eq!(m.get(0).unwrap(), Fill::from(&[2, 3]));
+        assert_eq!(m.get(1).unwrap(), Fill::from(&[2, 3]));
+    }
+
+    #[test]
+    fn product_triple_fills() {
+        setup();
+        let m = Mdd::new(4, 3, Multiply, 4, &no_lines()).unwrap();
+        assert_eq!(m.get(0).unwrap(), Fill::from(&[1, 2, 4]));
+        assert_eq!(m.get(1).unwrap(), Fill::from(&[1, 2, 4]));
+        assert_eq!(m.get(2).unwrap(), Fill::from(&[1, 2, 4]));
+    }
+
+    // ---- infeasibility ----
+
+    #[test]
+    fn sum_target_out_of_range_is_empty_fills() {
+        setup();
+        assert!(matches!(
+            Mdd::new(3, 3, Add, 1, &no_lines()),
+            Err(EmptyFills)
+        ));
+        assert!(matches!(
+            Mdd::new(3, 3, Add, 10, &no_lines()),
+            Err(EmptyFills)
+        ));
+    }
+
+    #[test]
+    fn product_target_out_of_range_is_empty_fills() {
+        setup();
+        assert!(matches!(
+            Mdd::new(3, 3, Multiply, 28, &no_lines()),
+            Err(EmptyFills)
+        ));
+    }
+
+    // ---- remove_support ----
+
+    #[test]
+    fn remove_support_empty_is_identity() {
+        setup();
+        let m = Mdd::new(3, 3, Add, 5, &no_lines()).unwrap();
+        assert_eq!(
+            sorted_tuples(&m.remove_support(&HashMap::<T, HashSet<N>>::new())),
+            sorted_tuples(&m)
+        );
+    }
+
+    #[test]
+    fn remove_support_sum_triple_delete_var0() {
+        setup();
+        let m = Mdd::new(3, 3, Add, 5, &no_lines())
+            .unwrap()
+            .remove_support(&forbidden(&[(0, &[1])]));
+        assert_eq!(
+            sorted_tuples(&m),
+            vec![vec![2, 1, 2], vec![2, 2, 1], vec![3, 1, 1]]
+        );
+    }
+
+    #[test]
+    fn remove_support_sum_pair_delete_var0() {
+        setup();
+        let m = Mdd::new(3, 2, Add, 4, &no_lines())
+            .unwrap()
+            .remove_support(&forbidden(&[(0, &[2])]));
+        assert_eq!(sorted_tuples(&m), vec![vec![1, 3], vec![3, 1]]);
+    }
+
+    #[test]
+    fn remove_support_product_pair_delete_var0() {
+        setup();
+        let m = Mdd::new(4, 2, Multiply, 6, &no_lines())
+            .unwrap()
+            .remove_support(&forbidden(&[(0, &[3])]));
+        assert_eq!(sorted_tuples(&m), vec![vec![2, 3]]);
+    }
+
+    #[test]
+    fn remove_support_sum_triple_reset_var1() {
+        setup();
+        let m = Mdd::new(3, 3, Add, 5, &no_lines())
+            .unwrap()
+            .remove_support(&forbidden(&[(1, &[1, 2])]));
+        assert_eq!(sorted_tuples(&m), vec![vec![1, 3, 1]]);
+    }
+
+    #[test]
+    fn remove_support_sum_triple_two_layers() {
+        setup();
+        let m = Mdd::new(3, 3, Add, 5, &no_lines())
+            .unwrap()
+            .remove_support(&forbidden(&[(0, &[1]), (2, &[1])]));
+        assert_eq!(sorted_tuples(&m), vec![vec![2, 1, 2]]);
+    }
+
+    #[test]
+    fn remove_support_all_removed() {
+        setup();
+        let m = Mdd::new(3, 3, Add, 5, &no_lines())
+            .unwrap()
+            .remove_support(&forbidden(&[(1, &[1, 2, 3])]));
+        assert_eq!(sorted_tuples(&m), vec![] as Vec<Vec<N>>);
+    }
+
+    // ---- reducedness ----
+
+    #[test]
+    fn constructed_mdd_is_reduced() {
+        setup();
+        let cases = [
+            (4u8, Add, 5u32, 2u8),
+            (6, Add, 10, 3),
+            (9, Add, 20, 4),
+            (4, Multiply, 6, 2),
+            (6, Multiply, 24, 3),
+        ];
+        for (n, op, target, k) in cases {
+            assert_reduced(&Mdd::new(n, k, op, target, &no_lines()).unwrap());
         }
     }
 
-    fn square() -> Polyomino {
-        Polyomino::from_cells(&cells(&[(0, 0), (0, 1), (1, 0), (1, 1)])).unwrap()
+    #[test]
+    fn mdd_is_reduced_after_remove_support() {
+        setup();
+        let m = Mdd::new(4, 3, Add, 6, &no_lines()).unwrap();
+        let pruned = m.remove_support(&forbidden(&[(0, &[1])]));
+        assert_reduced(&pruned);
     }
 
-    /// Sorted, deduplicated tuples produced by the MDD for the given cage.
-    fn mdd_tuples(n: usize, polyomino: &Polyomino, op: Operation) -> Vec<Tuple> {
-        let mut ts: Vec<Tuple> = Mdd::build(n, polyomino, op).tuples().collect();
-        ts.sort();
-        ts.dedup();
-        ts
+    // ---- collinear distinctness ----
+
+    #[test]
+    fn domino_add_collinear_excludes_equal_values() {
+        setup();
+        // +4 domino with both cells in the same row (line = [0, 1]).
+        // Arithmetic tuples: (1,3),(2,2),(3,1). (2,2) repeats in the line → excluded.
+        let m = Mdd::new(4, 2, Add, 4, &[vec![0, 1]]).unwrap();
+        let mut t = m.tuples();
+        t.sort();
+        assert_eq!(t, vec![vec![1, 3], vec![3, 1]]);
+        assert!(!m.get(0).unwrap().contains(2));
+        assert!(!m.get(1).unwrap().contains(2));
     }
 
-    /// Sorted, deduplicated tuples produced by an independent brute-force oracle:
-    /// every assignment of `1..=n` to the cage's cells that satisfies the operator's
-    /// arithmetic and the all-different rule within each shared row or column. This
-    /// shares no machinery with [`Mdd::build`], so agreement is a real cross-check.
-    fn ref_tuples(n: usize, polyomino: &Polyomino, op: &Operation) -> Vec<Tuple> {
-        let cells = polyomino.cells();
-        let k = cells.len();
+    #[test]
+    fn domino_no_line_retains_equal_value_tuples() {
+        setup();
+        // Same arithmetic, no collinear constraint: (2,2) survives.
+        let m = Mdd::new(4, 2, Add, 4, &no_lines()).unwrap();
+        assert!(m.get(0).unwrap().contains(2));
+        assert!(m.get(1).unwrap().contains(2));
+    }
 
-        let collinear_ok = |t: &[Value]| {
-            (0..k).all(|i| {
-                (0..i).all(|j| {
-                    (cells[i].row != cells[j].row && cells[i].column != cells[j].column)
-                        || t[i] != t[j]
-                })
-            })
-        };
+    #[test]
+    fn l_cage_collinear_corner_admits_4_arms_do_not() {
+        setup();
+        // L-shape: cells at positions 0=(1,1), 1=(1,2), 2=(2,1) in a 4×4 grid.
+        // Polyomino sorted order: (1,1)=depth0, (1,2)=depth1, (2,1)=depth2.
+        // Collinear lines: row1 = [0,1] (depths 0 and 1), col1 = [0,2] (depths 0 and 2).
+        // Target = 6, n = 4.
+        //
+        // Only corner (depth 0) should admit value 4, via tuple (4,1,1) where
+        // the two 1s sit at non-collinear positions 1 and 2.
+        let lines = vec![vec![0, 1], vec![0, 2]]; // row line, col line
+        let m = Mdd::new(4, 3, Add, 6, &lines).unwrap();
+        // corner (depth 0) can be 4
+        assert!(
+            m.get(0).unwrap().contains(4),
+            "corner should admit 4 via (4,1,1)"
+        );
+        // arms (depths 1 and 2) cannot be 4
+        assert!(
+            !m.get(1).unwrap().contains(4),
+            "arm at depth 1 must not admit 4"
+        );
+        assert!(
+            !m.get(2).unwrap().contains(4),
+            "arm at depth 2 must not admit 4"
+        );
+    }
 
-        let satisfies = |t: &[Value]| match op.operator {
-            Operator::Add => t.iter().map(|&v| Target::from(v)).sum::<Target>() == op.target,
-            Operator::Multiply => {
-                t.iter().map(|&v| Target::from(v)).product::<Target>() == op.target
-            }
-            Operator::Given => k == 1 && Target::from(t[0]) == op.target,
-            Operator::Subtract => {
-                k == 2 && Target::from(t[0]).abs_diff(Target::from(t[1])) == op.target
-            }
-            Operator::Divide => {
-                k == 2 && {
-                    let (a, b) = (Target::from(t[0]), Target::from(t[1]));
-                    a == b * op.target || b == a * op.target
+    // ---- brute-force oracle cross-check ----
+
+    #[test]
+    #[ignore = "exhaustive property test; run with --include-ignored on merge to main"]
+    fn matches_brute_force_across_n_arity_and_target() {
+        setup();
+        for n in 3u8..=9 {
+            for k in 2u8..=5 {
+                let max_sum = T::from(n) * T::from(k) + 1;
+                for target in 1..=max_sum {
+                    assert_equiv(n, Add, target, k);
+                }
+                let max_product = T::from(n).pow(u32::from(k)) + 1;
+                for target in 1..=max_product {
+                    assert_equiv(n, Multiply, target, k);
                 }
             }
-        };
+        }
+    }
 
-        // Enumerate every k-tuple over `1..=n` like an odometer.
+    // ---- helpers ----
+
+    fn forbidden(pairs: &[(T, &[N])]) -> HashMap<T, HashSet<N>> {
+        pairs
+            .iter()
+            .map(|&(var, vals)| (var, vals.iter().copied().collect()))
+            .collect()
+    }
+
+    fn sorted_tuples(m: &Mdd) -> Vec<Vec<N>> {
+        let mut t = m.tuples();
+        t.sort();
+        t
+    }
+
+    fn ref_tuples(n: N, op: CommutativeOperator, target: T, k: N) -> Vec<Vec<N>> {
         let mut out = Vec::new();
-        let mut t = vec![1u8; k];
+        let mut t = vec![1u8; k as usize];
         loop {
-            if collinear_ok(&t) && satisfies(&t) {
+            if op.apply_to_tuple(&t) == target {
                 out.push(t.clone());
             }
             let mut i = 0;
-            while i < k && t[i] == n as Value {
+            while i < k as usize && t[i] == n {
                 t[i] = 1;
                 i += 1;
             }
-            if i == k {
+            if i == k as usize {
                 break;
             }
             t[i] += 1;
         }
-
         out.sort();
-        out.dedup();
         out
     }
 
-    /// Asserts the MDD and the reference enumerator agree, and that feasibility
-    /// matches tuple non-emptiness.
-    fn assert_equiv(n: usize, polyomino: &Polyomino, op: &Operation) {
-        let mdd = Mdd::build(n, polyomino, op.clone());
-        let expected = ref_tuples(n, polyomino, op);
-        let actual = mdd_tuples(n, polyomino, op.clone());
-        assert_eq!(
-            actual,
-            expected,
-            "mismatch for n={n}, op={op}, cells={:?}",
-            polyomino.cells()
-        );
-        assert_eq!(
-            mdd.is_feasible(),
-            !expected.is_empty(),
-            "feasibility mismatch for n={n}, op={op}, cells={:?}",
-            polyomino.cells()
-        );
-    }
-
-    /// Targets worth testing for `operator` in an `n`×`n` grid holding `k` cells. The
-    /// ranges run one past the largest reachable value to also exercise infeasibility.
-    fn targets(operator: &Operator, n: usize, k: usize) -> Vec<Target> {
-        match operator {
-            Operator::Add => (1..=(n as Target) * k as Target + 1).collect(),
-            Operator::Multiply => (1..=(n as Target).pow(k as u32) + 1).collect(),
-            Operator::Subtract => (0..=n as Target).collect(),
-            Operator::Divide => (1..=n as Target).collect(),
-            Operator::Given => (1..=n as Target + 1).collect(),
-        }
-    }
-
-    // --- property test: equivalence with the reference enumerator ---
-
-    #[test]
-    #[ignore = "exhaustive property test; run with --include-ignored on merge to main"]
-    fn mdd_matches_reference_across_shapes_operators_and_grids() {
-        let shapes = [singleton(), pair(), col_pair(), l_shape(), square()];
-        for shape in &shapes {
-            let k = shape.len();
-            for n in 3..=9 {
-                for operator in operators_for(shape) {
-                    for target in targets(&operator, n, k) {
-                        assert_equiv(n, shape, &Operation::new(operator.clone(), target));
-                    }
-                }
+    fn assert_equiv(n: N, op: CommutativeOperator, target: T, k: N) {
+        let expected = ref_tuples(n, op, target, k);
+        match Mdd::new(n, k, op, target, &no_lines()) {
+            Ok(m) => {
+                let mut actual = m.tuples();
+                actual.sort();
+                assert_eq!(
+                    actual, expected,
+                    "mismatch for n={n}, op={op:?}, target={target}, k={k}"
+                );
             }
-        }
-    }
-
-    // --- reducedness ---
-
-    /// The MDD is reduced iff no two distinct nodes at the same level share an edge map.
-    fn assert_reduced(mdd: &Mdd) {
-        let mut seen: HashSet<(usize, Vec<(Value, NodeId)>)> = HashSet::new();
-        for node in &mdd.nodes {
-            assert!(
-                seen.insert((node.level, node.edges.clone())),
-                "duplicate node at level {} with edges {:?}",
-                node.level,
-                node.edges
-            );
-        }
-    }
-
-    #[test]
-    fn constructed_mdd_is_reduced() {
-        let cases = [
-            (4, pair(), Operation::new(Operator::Add, 5)),
-            (6, l_shape(), Operation::new(Operator::Multiply, 24)),
-            (4, square(), Operation::new(Operator::Multiply, 24)),
-            (9, square(), Operation::new(Operator::Add, 20)),
-        ];
-        for (n, shape, op) in cases {
-            assert_reduced(&Mdd::build(n, &shape, op));
-        }
-    }
-
-    // --- Given (k = 1) ---
-
-    #[test]
-    fn given_in_range_yields_single_tuple() {
-        let mdd = Mdd::build(4, &singleton(), Operation::new(Operator::Given, 3));
-        assert!(mdd.is_feasible());
-        assert_eq!(mdd.tuples().collect::<Vec<_>>(), vec![vec![3]]);
-    }
-
-    #[test]
-    fn given_out_of_range_is_infeasible() {
-        let mdd = Mdd::build(4, &singleton(), Operation::new(Operator::Given, 5));
-        assert!(!mdd.is_feasible());
-        assert_eq!(mdd.tuples().count(), 0);
-    }
-
-    // --- Add ---
-
-    #[test]
-    fn add_row_pair_matches_reference() {
-        assert_equiv(4, &pair(), &Operation::new(Operator::Add, 5));
-    }
-
-    #[test]
-    fn add_column_pair_matches_reference() {
-        assert_equiv(4, &col_pair(), &Operation::new(Operator::Add, 5));
-    }
-
-    #[test]
-    fn add_l_shape_matches_reference() {
-        assert_equiv(6, &l_shape(), &Operation::new(Operator::Add, 10));
-    }
-
-    // --- Multiply ---
-
-    #[test]
-    fn multiply_row_pair_matches_reference() {
-        assert_equiv(6, &pair(), &Operation::new(Operator::Multiply, 6));
-    }
-
-    #[test]
-    fn multiply_column_pair_matches_reference() {
-        assert_equiv(6, &col_pair(), &Operation::new(Operator::Multiply, 6));
-    }
-
-    #[test]
-    fn multiply_l_shape_matches_reference() {
-        assert_equiv(6, &l_shape(), &Operation::new(Operator::Multiply, 24));
-    }
-
-    // --- Subtract / Divide are binary: non-pair cages yield no tuples ---
-
-    #[test]
-    fn subtract_non_pair_is_infeasible() {
-        // The reference enumerator has no length-3 permutations of a 2-element multiset,
-        // so a 3-cell Subtract cage admits no tuples; the MDD must agree (not a chain).
-        let mdd = Mdd::build(4, &l_shape(), Operation::new(Operator::Subtract, 1));
-        assert!(!mdd.is_feasible());
-        assert_eq!(mdd.tuples().count(), 0);
-        assert_equiv(4, &l_shape(), &Operation::new(Operator::Subtract, 1));
-    }
-
-    #[test]
-    fn divide_non_pair_is_infeasible() {
-        let mdd = Mdd::build(6, &l_shape(), Operation::new(Operator::Divide, 2));
-        assert!(!mdd.is_feasible());
-        assert_eq!(mdd.tuples().count(), 0);
-        assert_equiv(6, &l_shape(), &Operation::new(Operator::Divide, 2));
-    }
-
-    // --- 2×2 square: the smallest case with real row/column merging ---
-
-    #[test]
-    fn square_multiply_matches_reference() {
-        assert_equiv(4, &square(), &Operation::new(Operator::Multiply, 24));
-    }
-
-    #[test]
-    fn square_add_matches_reference() {
-        assert_equiv(4, &square(), &Operation::new(Operator::Add, 10));
-    }
-
-    /// Node count of the minimal prefix-sharing trie of `ts`: one node per distinct
-    /// prefix (including the empty root and every full tuple as its own leaf). The
-    /// reduced MDD additionally merges shared *suffixes*, so it can only be smaller.
-    fn trie_node_count(ts: &[Tuple]) -> usize {
-        let mut prefixes: HashSet<&[Value]> = HashSet::new();
-        for t in ts {
-            for len in 0..=t.len() {
-                let _ = prefixes.insert(&t[..len]);
+            Err(EmptyFills) => {
+                assert!(
+                    expected.is_empty(),
+                    "Mdd returned EmptyFills but expected {expected:?} for n={n}, op={op:?}, target={target}, k={k}"
+                );
             }
-        }
-        prefixes.len()
-    }
-
-    #[test]
-    fn square_merges_equivalent_nodes() {
-        // A 2×2 square shares a row or column between every pair of cells, so the
-        // construction merges equivalent subgraphs (most visibly the single accept
-        // terminal that all tuples share). The reduced MDD therefore holds strictly
-        // fewer nodes than the equivalent prefix-sharing trie.
-        let op = Operation::new(Operator::Add, 10);
-        let mdd = Mdd::build(4, &square(), op.clone());
-        assert_reduced(&mdd);
-        let tuples = ref_tuples(4, &square(), &op);
-        assert!(tuples.len() > 1);
-        assert!(
-            mdd.nodes.len() < trie_node_count(&tuples),
-            "expected the reduced MDD ({} nodes) to be smaller than the trie ({} nodes)",
-            mdd.nodes.len(),
-            trie_node_count(&tuples)
-        );
-    }
-
-    // --- support ---
-
-    /// Reference per-cell support: the per-position union of values over every valid
-    /// tuple consistent with `values`. Runs in `O(|paths|)`, the cost the MDD avoids.
-    fn brute_force_support(mdd: &Mdd, values: &[Values]) -> Vec<Values> {
-        let mut support = vec![Values::default(); values.len()];
-        for tuple in mdd.tuples() {
-            if tuple.iter().zip(values).all(|(&v, d)| d.contains(v)) {
-                for (i, &v) in tuple.iter().enumerate() {
-                    support[i] = support[i] | Values::singleton(v);
-                }
-            }
-        }
-        support
-    }
-
-    /// `k` random value sets over `1..=n`, each value independently included with
-    /// probability one half — so some value sets may come out empty.
-    fn random_support_values(rng: &mut ChaCha8Rng, n: usize, k: usize) -> Vec<Values> {
-        (0..k)
-            .map(|_| {
-                (1u8..=(n as Value)).fold(Values::default(), |acc, v| {
-                    if rng.random_range(0u8..2) == 1 {
-                        acc | Values::singleton(v)
-                    } else {
-                        acc
-                    }
-                })
-            })
-            .collect()
-    }
-
-    #[test]
-    fn support_matches_brute_force_oracle() {
-        let mut rng = ChaCha8Rng::seed_from_u64(0x5044_2026);
-        let shapes = [singleton(), pair(), col_pair(), l_shape(), square()];
-        for shape in &shapes {
-            let k = shape.len();
-            for n in 3..=6 {
-                for operator in operators_for(shape) {
-                    let ts = targets(&operator, n, k);
-                    for _ in 0..6 {
-                        let target = ts[rng.random_range(0..ts.len())];
-                        let mdd = Mdd::build(n, shape, Operation::new(operator.clone(), target));
-                        for _ in 0..8 {
-                            let values = random_support_values(&mut rng, n, k);
-                            assert_eq!(
-                                mdd.support(&values),
-                                brute_force_support(&mdd, &values),
-                                "support mismatch for n={n}, op={operator}, target={target}, \
-                                 values={values:?}, cells={:?}",
-                                shape.cells()
-                            );
-                        }
-                    }
-                }
-            }
+            Err(e) => panic!("unexpected error {e:?}"),
         }
     }
 
-    #[test]
-    fn support_with_empty_value_set_is_all_empty() {
-        // A feasible 2×2 Add cage, but one cell's value set is knocked out entirely.
-        let mdd = Mdd::build(4, &square(), Operation::new(Operator::Add, 10));
-        assert!(mdd.is_feasible());
-        let values = vec![
-            Values::all(4),
-            Values::default(),
-            Values::all(4),
-            Values::all(4),
-        ];
-        let support = mdd.support(&values);
-        assert_eq!(support.len(), 4);
-        assert!(support.iter().all(|s| s.is_empty()));
-    }
-
-    #[test]
-    fn support_full_value_sets_is_natural_support() {
-        // With every value set `1..=n` no edge is filtered, so support is exactly the
-        // natural per-cell support: each level's labels on a root-to-terminal path,
-        // equivalently the per-position union over all valid tuples.
-        let n = 6;
-        let shape = l_shape();
-        let k = shape.len();
-        let mdd = Mdd::build(n, &shape, Operation::new(Operator::Multiply, 24));
-        let values = vec![Values::all(n); k];
-        let natural = brute_force_support(&mdd, &values);
-        assert_eq!(mdd.support(&values), natural);
-        // Sanity: the cage is non-trivial — at least one cell supports several values.
-        assert!(natural.iter().any(|s| s.len() > 1));
+    fn assert_reduced(m: &Mdd) {
+        let mut seen = HashSet::new();
+        for node in m.edges.keys() {
+            assert!(seen.insert(node.clone()), "duplicate node {node} in MDD");
+        }
     }
 }

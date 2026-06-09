@@ -10,14 +10,16 @@ const PUZZLE_3 = {
   cages: [
     {
       polyomino: [
-        { row: 0, column: 0 },
-        { row: 0, column: 1 },
+        [1, 1],
+        [1, 2],
       ],
-      operation: { operator: 'Add', target: 3 },
+      operation: 'Add',
+      target: 3,
     },
     {
-      polyomino: [{ row: 0, column: 2 }],
-      operation: { operator: 'Given', target: 3 },
+      polyomino: [[1, 3]],
+      operation: 'Given',
+      target: 3,
     },
   ],
 };
@@ -122,13 +124,19 @@ test.describe('tab navigation between cages', () => {
     expect(after.y).toBeLessThan(before.y);
   });
 
-  test('selection rect always visible (no accent lines after Tab)', async ({ page }) => {
+  test('selection rect always visible (no accent lines after Tab)', async ({
+    page,
+  }) => {
     await setup(page);
     await page.keyboard.press(TAB);
 
     // There is always exactly one accent rect (active cell highlight).
-    await expect(page.locator(`.grid-svg rect[stroke="${ACCENT}"]`)).toHaveCount(1);
+    await expect(
+      page.locator(`.grid-svg rect[stroke="${ACCENT}"]`),
+    ).toHaveCount(1);
     // No accent lines (those are only in the operation selector).
-    await expect(page.locator(`.grid-svg line[stroke="${ACCENT}"]`)).toHaveCount(0);
+    await expect(
+      page.locator(`.grid-svg line[stroke="${ACCENT}"]`),
+    ).toHaveCount(0);
   });
 });

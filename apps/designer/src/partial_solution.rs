@@ -4,7 +4,7 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use mathdoku::{Cage, Cell, Grid, Puzzle};
+use mathdoku::{Cage, Cell, Puzzle};
 
 /// The cage structure and constrained cell values for the puzzle being designed,
 /// shared via context for on-demand queries.
@@ -16,12 +16,12 @@ pub struct PartialSolution(Arc<PartialSolutionInner>);
 
 struct PartialSolutionInner {
     puzzle: Mutex<Puzzle>,
-    grid: Mutex<Grid>,
+    grid: Mutex<Puzzle>,
 }
 
 impl PartialSolution {
     #[must_use]
-    pub fn new(puzzle: Puzzle, grid: Grid) -> Self {
+    pub fn new(puzzle: Puzzle, grid: Puzzle) -> Self {
         Self(Arc::new(PartialSolutionInner {
             puzzle: Mutex::new(puzzle),
             grid: Mutex::new(grid),
@@ -32,7 +32,7 @@ impl PartialSolution {
         self.0.puzzle.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn lock_grid(&self) -> std::sync::MutexGuard<'_, Grid> {
+    fn lock_grid(&self) -> std::sync::MutexGuard<'_, Puzzle> {
         self.0.grid.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
@@ -48,15 +48,14 @@ impl PartialSolution {
         if covered.len() < n * n {
             return None;
         }
-        let propagated = Grid::new(n).ok()?.constrain(&puzzle).ok()?;
-        Some(propagated.solutions(&puzzle).count())
+        Some(puzzle.solutions().count())
     }
 
     /// Returns the singleton solution value for `cell`, or `None` if not a singleton.
     #[must_use]
-    pub fn cell_value_singleton(&self, cell: Cell) -> Option<u8> {
+    pub fn cell_value_singleton(&self, cell: Cell) -> Option<mathdoku::N> {
         let grid = self.lock_grid();
-        let v = grid.cell_values(cell).ok()?;
+        let v = grid.get(cell).ok()?;
         drop(grid);
         v.is_singleton().then(|| v.values().first().copied())?
     }
@@ -69,12 +68,9 @@ impl PartialSolution {
     pub fn viable_counts(&self, cage_idx: usize) -> Option<(usize, usize)> {
         let puzzle = self.lock_puzzle();
         let cage = puzzle.cages().nth(cage_idx)?;
-        let n = puzzle.n();
-        // Propagate all cage constraints from a fresh unconstrained grid.
-        let propagated = Grid::new(n).ok()?.constrain(&puzzle).ok()?;
-        let tuples = propagated.cage_tuples(&puzzle, cage).ok()?;
+        let tuples = puzzle.cage_tuples(&cage.polyomino).ok()?;
         drop(puzzle);
-        let multisets: HashSet<Vec<u8>> = tuples
+        let multisets: HashSet<Vec<mathdoku::N>> = tuples
             .iter()
             .map(|t| {
                 let mut s = t.clone();
@@ -93,7 +89,7 @@ impl PartialSolution {
         puzzle
             .cages()
             .enumerate()
-            .find(|(_, cage)| cage.cells().contains(&cell))
+            .find(|(_, cage)| cage.contains(cell))
             .map(|(i, _)| i)
     }
 }
@@ -102,12 +98,13 @@ impl PartialSolution {
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
     use super::PartialSolution;
-    use mathdoku::{Cage, Cell, Grid, Operation, Operator, Polyomino, Puzzle};
+    use mathdoku::{Cage, Cell, N, Operator, Polyomino, Puzzle};
 
-    fn cage_at(positions: &[(usize, usize)], op: Operator, target: u64) -> Cage {
+    fn cage_at(n: N, positions: &[(usize, usize)], op: Operator, target: u64) -> Cage {
         let cells: Vec<Cell> = positions.iter().map(|&(r, c)| Cell::new(r, c)).collect();
         let poly = Polyomino::from_cells(&cells).unwrap();
-        Cage::new(poly, Operation::new(op, target)).unwrap()
+        let target = mathdoku::T::try_from(target).unwrap();
+        Cage::new(n, poly, op, target).unwrap()
     }
 
     /// A 3×3 puzzle whose cells are pinned to the Latin square
@@ -123,7 +120,8 @@ mod tests {
         for (r, row) in square.iter().enumerate() {
             for (c, &v) in row.iter().enumerate() {
                 puzzle = puzzle
-                    .insert_cage(cage_at(&[(r, c)], Operator::Given, v))
+                    .insert_cage(&cage_at(3, &[(r, c)], Operator::Given, v))
+                    .unwrap()
                     .unwrap();
             }
         }
@@ -137,7 +135,8 @@ mod tests {
         let mut puzzle = Puzzle::new(3).unwrap();
         for r in 0..3 {
             puzzle = puzzle
-                .insert_cage(cage_at(&[(r, 0), (r, 1), (r, 2)], Operator::Add, 6))
+                .insert_cage(&cage_at(3, &[(r, 0), (r, 1), (r, 2)], Operator::Add, 6))
+                .unwrap()
                 .unwrap();
         }
         puzzle
@@ -146,14 +145,14 @@ mod tests {
     #[test]
     fn solution_count_unique_puzzle_is_one() {
         let puzzle = given_3x3();
-        let ps = PartialSolution::new(puzzle, Grid::new(3).unwrap());
+        let ps = PartialSolution::new(puzzle, Puzzle::new(3).unwrap());
         assert_eq!(ps.solution_count(), Some(1));
     }
 
     #[test]
     fn solution_count_row_sums_counts_all_latin_squares() {
         let puzzle = row_sums_3x3();
-        let ps = PartialSolution::new(puzzle, Grid::new(3).unwrap());
+        let ps = PartialSolution::new(puzzle, Puzzle::new(3).unwrap());
         assert_eq!(ps.solution_count(), Some(12));
     }
 
@@ -162,16 +161,17 @@ mod tests {
         // Only one cell is covered, so most of the grid is uncaged.
         let puzzle = Puzzle::new(3)
             .unwrap()
-            .insert_cage(cage_at(&[(0, 0)], Operator::Given, 1))
+            .insert_cage(&cage_at(3, &[(0, 0)], Operator::Given, 1))
+            .unwrap()
             .unwrap();
-        let ps = PartialSolution::new(puzzle, Grid::new(3).unwrap());
+        let ps = PartialSolution::new(puzzle, Puzzle::new(3).unwrap());
         assert_eq!(ps.solution_count(), None);
     }
 
     #[test]
     fn cell_value_singleton_reads_pinned_grid() {
-        let square = vec![vec![1u8, 2, 3], vec![2, 3, 1], vec![3, 1, 2]];
-        let grid = Grid::from_latin_square(3, &square).unwrap();
+        let square: Vec<Vec<N>> = vec![vec![1, 2, 3], vec![2, 3, 1], vec![3, 1, 2]];
+        let grid = Puzzle::from_latin_square(3, &square).unwrap();
         let ps = PartialSolution::new(Puzzle::new(3).unwrap(), grid);
         assert_eq!(ps.cell_value_singleton(Cell::new(0, 0)), Some(1));
         assert_eq!(ps.cell_value_singleton(Cell::new(1, 0)), Some(2));
@@ -181,14 +181,14 @@ mod tests {
     #[test]
     fn cell_value_singleton_none_when_values_not_singleton() {
         // A fresh grid has the full values {1,2,3} in every cell.
-        let ps = PartialSolution::new(Puzzle::new(3).unwrap(), Grid::new(3).unwrap());
+        let ps = PartialSolution::new(Puzzle::new(3).unwrap(), Puzzle::new(3).unwrap());
         assert_eq!(ps.cell_value_singleton(Cell::new(0, 0)), None);
     }
 
     #[test]
     fn viable_counts_row_cage_has_one_multiset_six_tuples() {
         let puzzle = row_sums_3x3();
-        let ps = PartialSolution::new(puzzle, Grid::new(3).unwrap());
+        let ps = PartialSolution::new(puzzle, Puzzle::new(3).unwrap());
         // The only multiset summing to 6 with distinct values in 1..=3 is {1,2,3},
         // which has 3! = 6 ordered arrangements.
         assert_eq!(ps.viable_counts(0), Some((1, 6)));
@@ -197,17 +197,36 @@ mod tests {
     #[test]
     fn viable_counts_out_of_range_is_none() {
         let puzzle = row_sums_3x3();
-        let ps = PartialSolution::new(puzzle, Grid::new(3).unwrap());
+        let ps = PartialSolution::new(puzzle, Puzzle::new(3).unwrap());
         assert_eq!(ps.viable_counts(99), None);
+    }
+
+    #[test]
+    fn viable_counts_given_cage_after_add_cage_has_one_tuple() {
+        // PUZZLE_3: Add(3) on (0,0)+(0,1) forces (0,2)={3} via row all-different.
+        // Given(3) at (0,2) has no MDD (Given is non-monotonic) but brute-force
+        // enumeration finds the single valid tuple (3,).
+        let puzzle = Puzzle::new(3)
+            .unwrap()
+            .insert_cage(&cage_at(3, &[(0, 0), (0, 1)], Operator::Add, 3))
+            .unwrap()
+            .unwrap()
+            .insert_cage(&cage_at(3, &[(0, 2)], Operator::Given, 3))
+            .unwrap()
+            .unwrap();
+        let ps = PartialSolution::new(puzzle, Puzzle::new(3).unwrap());
+        assert_eq!(ps.viable_counts(0), Some((1, 2))); // Add(3): (1,2) and (2,1)
+        assert_eq!(ps.viable_counts(1), Some((1, 1))); // Given(3): only (3,)
     }
 
     #[test]
     fn cage_index_at_covered_and_uncovered() {
         let puzzle = Puzzle::new(3)
             .unwrap()
-            .insert_cage(cage_at(&[(0, 0), (0, 1)], Operator::Add, 3))
+            .insert_cage(&cage_at(3, &[(0, 0), (0, 1)], Operator::Add, 3))
+            .unwrap()
             .unwrap();
-        let ps = PartialSolution::new(puzzle, Grid::new(3).unwrap());
+        let ps = PartialSolution::new(puzzle, Puzzle::new(3).unwrap());
         assert_eq!(ps.cage_index_at(0, 0), Some(0));
         assert_eq!(ps.cage_index_at(0, 1), Some(0));
         assert_eq!(ps.cage_index_at(2, 2), None);

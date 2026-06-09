@@ -47,16 +47,16 @@ export async function installTauriStubs(
       let hasSolution = !withoutSolution;
 
       // Wrap a bare { n, cages? } puzzle into the State wire format that the
-      // Rust backend now returns: { puzzle, solution, current, active, provisional_cages }.
+      // Rust backend now returns: { puzzle, solution, active, provisional_cages }.
       // `solution` is null in Without-Solution mode.
+      // Cell wire format: [row, col] 1-indexed (matching Rust's Cell(usize,usize) tuple struct).
       type BareP = { n: number; cages?: unknown[] } | null;
       const wrapState = (p: BareP) =>
         p
           ? {
               puzzle: p,
               solution: hasSolution ? { n: p.n } : null,
-              current: { n: p.n },
-              active: { row: 0, column: 0 },
+              active: [1, 1],
               provisional_cages: [],
             }
           : null;
@@ -94,27 +94,22 @@ export async function installTauriStubs(
               return Promise.resolve(null);
             }
             if (cmd === 'remove_cage_at') {
+              // polyomino arg is [[row,col],...] 1-indexed tuples.
               const typedArgs = args as
-                | { polyomino?: { row: number; column: number }[] }
+                | { polyomino?: [number, number][] }
                 | undefined;
               const removeCells = typedArgs?.polyomino ?? [];
               const currentPuzzle = puzzle as BareP;
               if (!currentPuzzle) return Promise.resolve(null);
               const cages = (currentPuzzle.cages ?? []).filter(
                 (cage: unknown) => {
-                  const c = cage as {
-                    polyomino?: { row: number; column: number }[];
-                  };
+                  const c = cage as { polyomino?: [number, number][] };
                   const cageSet = new Set(
-                    (c.polyomino ?? []).map(
-                      ({ row, column }) => `${row},${column}`,
-                    ),
+                    (c.polyomino ?? []).map(([r, col]) => `${r},${col}`),
                   );
                   return !(
                     removeCells.length === cageSet.size &&
-                    removeCells.every(({ row, column }) =>
-                      cageSet.has(`${row},${column}`),
-                    )
+                    removeCells.every(([r, col]) => cageSet.has(`${r},${col}`))
                   );
                 },
               );
@@ -122,24 +117,55 @@ export async function installTauriStubs(
               return Promise.resolve(wrapState(puzzle as BareP));
             }
             if (cmd === 'insert_cage') {
-              // Add the cells as a new cage and return a State.
+              // polyomino arg is [[row,col],...] 1-indexed tuples.
+              // operator is a string enum variant; target is a number.
               const typedArgs = args as
                 | {
-                    cells?: { row: number; column: number }[];
+                    polyomino?: [number, number][];
                     operator?: string;
                     target?: number | null;
                   }
                 | undefined;
-              const cells = typedArgs?.cells ?? [];
+              const cells = typedArgs?.polyomino ?? [];
               const operator = typedArgs?.operator ?? 'Given';
               const currentPuzzle = puzzle as BareP;
               if (!currentPuzzle) return Promise.resolve(null);
               // Without-Solution mode supplies the target; With-Solution derives it.
-              const target =
-                typedArgs?.target ?? (operator === 'Given' ? 1 : 0);
+              // Use the maximum valid target so the cage stays feasible even after
+              // other cages have narrowed adjacent cell domains.
+              // Max sum for k cells with distinct values 1..n: k*n - k*(k-1)/2
+              // Max product: n! / (n-k)!
+              // Subtract (2 cells): n-1 (largest gap between distinct values)
+              // Divide (2 cells): n (n/1 is the largest valid ratio)
+              const k = cells.length;
+              const n = currentPuzzle.n;
+              const maxAdd = k * n - (k * (k - 1)) / 2;
+              const maxMul = Array.from({ length: k }, (_, i) => n - i).reduce(
+                (a, b) => a * b,
+                1,
+              );
+              // For Given singletons, derive a cell-unique value using the latin
+              // square pattern. Cells are 1-indexed so subtract 1 to get 0-indexed coords.
+              const givenTarget =
+                cells.length === 1
+                  ? ((cells[0][0] - 1 + cells[0][1] - 1) % n) + 1
+                  : 1;
+              const defaultTarget =
+                operator === 'Given'
+                  ? givenTarget
+                  : operator === 'Add'
+                    ? maxAdd
+                    : operator === 'Multiply'
+                      ? maxMul
+                      : operator === 'Subtract'
+                        ? n - 1
+                        : n; // Divide: largest valid ratio is n/1 = n
+              const target = typedArgs?.target ?? defaultTarget;
+              // Cage wire format: polyomino [[r,c],...] 1-indexed, operation string, target number.
               const newCage = {
-                polyomino: cells.map(({ row, column }) => ({ row, column })),
-                operation: { operator, target },
+                polyomino: cells,
+                operation: operator,
+                target,
               };
               const cages = [...(currentPuzzle.cages ?? []), newCage];
               puzzle = { n: currentPuzzle.n, cages };
@@ -164,19 +190,23 @@ export async function installTauriStubs(
 // A 3×3 puzzle with two cages used across multiple test suites.
 // Cage 0: cells (0,0),(0,1) — Add(3)
 // Cage 1: cell  (0,2)       — Given(3)
+// Cell wire format: [row, col] 1-indexed.
+// Cage wire format: { polyomino: [[r,c],...], operation: "Op", target: N }
 export const PUZZLE_3 = {
   n: 3,
   cages: [
     {
       polyomino: [
-        { row: 0, column: 0 },
-        { row: 0, column: 1 },
+        [1, 1],
+        [1, 2],
       ],
-      operation: { operator: 'Add', target: 3 },
+      operation: 'Add',
+      target: 3,
     },
     {
-      polyomino: [{ row: 0, column: 2 }],
-      operation: { operator: 'Given', target: 3 },
+      polyomino: [[1, 3]],
+      operation: 'Given',
+      target: 3,
     },
   ],
 };
@@ -201,9 +231,7 @@ export async function interceptInvokeCommand(
       const orig = tauri.core.invoke;
       tauri.core.invoke = (cmd, args) => {
         if (cmd === commandName) {
-          (window as unknown as Record<string, unknown[]>)[arrayKey].push(
-            args,
-          );
+          (window as unknown as Record<string, unknown[]>)[arrayKey].push(args);
         }
         return orig(cmd, args);
       };

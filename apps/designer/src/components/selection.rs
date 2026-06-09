@@ -38,7 +38,7 @@ pub fn ProvisionalFills() -> impl IntoView {
             .iter()
             .flat_map(|cage| {
                 cage.cells().into_iter().map(move |c| {
-                    let (x, y) = origin(cell, c.row, c.column);
+                    let (x, y) = origin(cell, c.row(), c.column());
                     view! { <rect x=x y=y width=cell height=cell fill=PROVISIONAL_FILL /> }
                         .into_any()
                 })
@@ -71,21 +71,21 @@ pub fn SelectionOverlay() -> impl IntoView {
         for cage in &st.provisional_cages {
             let cell_set: HashSet<Cell> = cage.cells().into_iter().collect();
             for c in cage.cells() {
-                let (x, y) = origin(cell, c.row, c.column);
+                let (x, y) = origin(cell, c.row(), c.column());
                 let stroke = PROVISIONAL_STROKE;
-                if c.row == 0 || !cell_set.contains(&Cell::new(c.row - 1, c.column)) {
+                if c.row() == 0 || !cell_set.contains(&Cell::new(c.row() - 1, c.column())) {
                     let (x1, x2, yy) = (x + inset, x + cell - inset, y + inset);
                     elements.push(view! { <line x1=x1 y1=yy x2=x2 y2=yy stroke=stroke stroke-width=line_w stroke-linecap="square" /> }.into_any());
                 }
-                if !cell_set.contains(&Cell::new(c.row + 1, c.column)) {
+                if !cell_set.contains(&Cell::new(c.row() + 1, c.column())) {
                     let (x1, x2, yy) = (x + inset, x + cell - inset, y + cell - inset);
                     elements.push(view! { <line x1=x1 y1=yy x2=x2 y2=yy stroke=stroke stroke-width=line_w stroke-linecap="square" /> }.into_any());
                 }
-                if c.column == 0 || !cell_set.contains(&Cell::new(c.row, c.column - 1)) {
+                if c.column() == 0 || !cell_set.contains(&Cell::new(c.row(), c.column() - 1)) {
                     let (xx, y1, y2) = (x + inset, y + inset, y + cell - inset);
                     elements.push(view! { <line x1=xx y1=y1 x2=xx y2=y2 stroke=stroke stroke-width=line_w stroke-linecap="square" /> }.into_any());
                 }
-                if !cell_set.contains(&Cell::new(c.row, c.column + 1)) {
+                if !cell_set.contains(&Cell::new(c.row(), c.column() + 1)) {
                     let (xx, y1, y2) = (x + cell - inset, y + inset, y + cell - inset);
                     elements.push(view! { <line x1=xx y1=y1 x2=xx y2=y2 stroke=stroke stroke-width=line_w stroke-linecap="square" /> }.into_any());
                 }
@@ -93,7 +93,7 @@ pub fn SelectionOverlay() -> impl IntoView {
         }
 
         // Active cell selection rect.
-        let (x, y) = origin(cell, st.active.row, st.active.column);
+        let (x, y) = origin(cell, st.active.row(), st.active.column());
         elements.push(
             view! {
                 <rect

@@ -1,262 +1,567 @@
-//! A [`Cage`]: a polyomino with an arithmetic constraint.
+//! Cage representation pairing a polyomino with its arithmetic constraint.
 //!
-//! A cage combines a polyomino (the set of cells it covers) with an
-//! [`Operation`] (an [`Operator`] and numeric target). [`Cage::mdd`] returns the
-//! [`Mdd`] of every ordered assignment of values to the cage's cells that
-//! satisfies the arithmetic constraint and the all-different rule within each
-//! shared row and column of the polyomino.
+//! # Invariant: complete tuple support
+//!
+//! A `Cage` always stores the *complete* set of value tuples consistent with
+//! both its arithmetic constraint and the current per-cell candidate fills.
+//! Concretely: if a cell's candidate fill is `{a, b}`, then every tuple in
+//! the backing memo has a value in `{a, b}` at that position, and every value
+//! in `{a, b}` appears at that position in at least one tuple.
+//!
+//! This means [`Cage::set`] always recalculates from the full original tuple
+//! set rather than narrowing incrementally. Widening a cell's fill therefore
+//! restores tuples that were previously excluded, and narrowing it removes them.
+//!
+//! # Constraint kinds
+//!
+//! ## Commutative (add, multiply)
+//!
+//! Commutative operators are monotonically non-decreasing: extending a partial
+//! tuple can only keep the accumulated result the same or increase it. This
+//! monotonicity enables aggressive pruning during construction — branches whose
+//! partial result already exceeds the target, or can no longer reach it, are cut
+//! immediately. The result is stored as a [`Mdd`]: a DAG whose paths are exactly
+//! the valid tuples, compressed by sharing common prefixes and suffixes.
+//! Collinear distinctness (cells sharing a row or column must hold distinct values)
+//! is encoded directly in the MDD's DP state during construction.
+//!
+//! ## Non-commutative (subtract, divide)
+//!
+//! Subtract and divide are not monotonic, so the MDD pruning strategy does not
+//! apply. They are also inherently binary: Mathdoku defines subtract as
+//! `|a − b|` and divide as `max(a, b) / min(a, b)`, neither of which generalises
+//! meaningfully beyond a pair. Non-commutative cages are therefore always
+//! dominoes (exactly 2 cells), and their constraint is stored as a [`Table`] —
+//! the explicit list of valid pairs. Their operators (`|a−b| ≥ 1`, `max/min ≥ 2`)
+//! already guarantee the two values differ, so no separate distinctness step is needed.
+//!
+//! ## Given
+//!
+//! A given cage is a singleton cell whose value is fixed by the puzzle author.
+//! There is no arithmetic constraint and no memo: the value is stored directly.
 
-use serde::{Deserialize, Serialize};
-use std::cmp::Ordering;
-use std::hash::{Hash, Hasher};
-use std::sync::OnceLock;
-
-use crate::Error::InfeasibleOperation;
+use crate::csp::Constraint;
+use crate::fill::Fill;
+use crate::grid::Grid;
 use crate::mdd::Mdd;
-use crate::operation::Operation;
-use crate::polyomino::Polyomino;
-use crate::{Cell, Error, operators_for};
+use crate::memo::Memo;
+use crate::operator::{CommutativeOperator, NonCommutativeOperator};
+use crate::polyomino::{Cell, Polyomino};
+use crate::table::Table;
+use crate::{Error, Error::EmptyFills, N, T};
+use std::fmt::{Display, Formatter};
 
-/// A polyomino with an [`Operation`] constraining its cell values.
+/// The arithmetic operation and target for a cage.
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize,
+)]
+pub enum CageOperator {
+    /// Sum of all cell values equals the target.
+    Add,
+    /// Absolute difference of two cell values equals the target.
+    Subtract,
+    /// Product of all cell values equals the target.
+    Multiply,
+    /// Ratio `max/min` of two cell values equals the target.
+    Divide,
+    /// A single cell is fixed to the target value.
+    Given,
+}
+
+/// The constraint for a cage and its supporting values.
+#[derive(Clone, PartialEq, Eq, Debug)]
+enum CageSupport {
+    /// A commutative (monotonic) operation: add or multiply.
+    Commutative(CommutativeOperator, T, Mdd),
+    /// A non-commutative (non-monotonic) operation: subtract or divide.
+    NonCommutative(NonCommutativeOperator, T, Table),
+    /// A single cell with a fixed value.
+    Given(N),
+}
+
+/// A cage: a connected group of cells subject to an arithmetic constraint.
 ///
-/// The cage's allowed contents are built lazily and cached for the life of the instance.
-/// The cache participates in neither equality, ordering, hashing, nor
-/// serialization: two cages are equal exactly when their polyomino and operation
-/// match, regardless of whether either has materialized its contents.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// The constraint is one of:
+/// - **Commutative** (`Add`, `Multiply`): backed by an `Mdd` for efficient narrowing.
+/// - **`NonCommutative`** (`Subtract`, `Divide`): backed by a `Table` of explicit pairs.
+/// - **Given**: a singleton cell whose value is fixed.
+#[derive(Debug, Clone)]
 pub struct Cage {
-    polyomino: Polyomino,
-    operation: Operation,
-    #[serde(skip)]
-    mdd: OnceLock<(usize, Mdd)>,
+    /// The cells belonging to this cage.
+    pub polyomino: Polyomino,
+    /// The constraint for this cage and its supporting values.
+    support: CageSupport,
 }
 
 impl Cage {
-    /// Creates a cage from a polyomino and an operation.
+    /// Constructs a cage from a [`CageOperator`], polyomino, and target value.
+    ///
+    /// # Panics
+    ///
+    /// Never panics in practice: the `Given` branch is only reached after confirming `k == 1`.
     ///
     /// # Errors
-    /// Returns [`InfeasibleOperation`] if the operator is not valid for
-    /// the polyomino's size.
-    pub fn new(polyomino: Polyomino, operation: Operation) -> Result<Self, Error> {
-        if !operators_for(&polyomino).contains(&operation.operator()) {
-            return Err(InfeasibleOperation(polyomino, operation));
-        }
-        Ok(Self {
-            polyomino,
-            operation,
-            mdd: OnceLock::new(),
+    ///
+    /// Returns [`Error::InfeasibleCage`] if no tuples satisfy the constraint.
+    /// Returns [`Error::MissingPolyomino`] if `operation` is [`CageOperator::Given`]
+    /// and `polyomino` is empty.
+    pub fn new(
+        n: N,
+        polyomino: Polyomino,
+        operation: CageOperator,
+        target: T,
+    ) -> Result<Self, Error> {
+        let k = polyomino.len();
+        let result = match operation {
+            CageOperator::Add => {
+                Self::commutative(n, polyomino.clone(), CommutativeOperator::Add, target)
+            }
+            CageOperator::Multiply => {
+                Self::commutative(n, polyomino.clone(), CommutativeOperator::Multiply, target)
+            }
+            CageOperator::Subtract => {
+                if k != 2 {
+                    return Err(Error::InfeasibleCage(polyomino, u64::from(target)));
+                }
+                Self::non_commutative(
+                    n,
+                    polyomino.clone(),
+                    NonCommutativeOperator::Subtract,
+                    target,
+                )
+            }
+            CageOperator::Divide => {
+                if k != 2 || target < 2 {
+                    return Err(Error::InfeasibleCage(polyomino, u64::from(target)));
+                }
+                Self::non_commutative(n, polyomino.clone(), NonCommutativeOperator::Divide, target)
+            }
+            CageOperator::Given => {
+                if k != 1 {
+                    return Err(Error::InfeasibleCage(polyomino, u64::from(target)));
+                }
+                // k == 1 was just confirmed above, so `next()` always yields Some.
+                let Some(&cell) = polyomino.iter().next() else {
+                    return Err(Error::InfeasibleCage(polyomino, u64::from(target)));
+                };
+                let value = N::try_from(target)
+                    .map_err(|_| Error::InfeasibleCage(polyomino, u64::from(target)))?;
+                return Self::given(cell, value);
+            }
+        };
+        result.map_err(|e| match e {
+            EmptyFills => Error::InfeasibleCage(polyomino, u64::from(target)),
+            other => other,
         })
     }
 
-    /// Returns the cells covered by this cage.
-    pub fn cells(&self) -> Vec<Cell> {
-        self.polyomino.cells()
+    /// Constructs a cage for a commutative constraint over `polyomino`.
+    ///
+    /// Builds an MDD representing all `polyomino.len()`-tuples of values in
+    /// `1..=n` whose `operation` equals `target`, with collinear distinctness
+    /// baked into the MDD's DP state.
+    ///
+    /// # Errors
+    /// Returns [`EmptyFills`] if no tuples satisfy the constraint.
+    pub fn commutative(
+        n: N,
+        polyomino: Polyomino,
+        operation: CommutativeOperator,
+        target: T,
+    ) -> Result<Self, Error> {
+        let k = N::try_from(polyomino.len()).map_err(|_| EmptyFills)?;
+        let lines = collinear_groups(&polyomino);
+        let mdd = Mdd::new(n, k, operation, target, &lines)?;
+        let support = CageSupport::Commutative(operation, target, mdd);
+        Ok(Self { polyomino, support })
     }
 
-    /// Returns the operation (operator and target) for this cage.
-    pub fn operation(&self) -> Operation {
-        self.operation.clone()
+    /// Constructs a cage for a non-commutative constraint over `polyomino`.
+    ///
+    /// Builds a `Table` of all pairs of values in `1..=n` whose `operation`
+    /// equals `target`. Non-commutative cages must be exactly 2 cells.
+    /// Their operators (`|a−b| ≥ 1`, `max/min ≥ 2`) already guarantee distinct
+    /// values, so no collinear distinctness step is needed.
+    ///
+    /// # Errors
+    /// Returns [`EmptyFills`] if no pairs satisfy the constraint.
+    pub fn non_commutative(
+        n: N,
+        polyomino: Polyomino,
+        operation: NonCommutativeOperator,
+        target: T,
+    ) -> Result<Self, Error> {
+        let table = Table::non_commutative(n, operation, target)?;
+        let support = CageSupport::NonCommutative(operation, target, table);
+        Ok(Self { polyomino, support })
     }
 
-    /// Returns a reference to the polyomino for this cage.
+    /// Constructs a given cage: a single cell whose value is fixed to `target`.
+    ///
+    /// Always succeeds for a valid `cell`; returns `Err` only if the cell cannot
+    /// form a polyomino, which cannot happen for a single non-empty cell.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `polyomino` is empty.
+    pub fn given(cell: Cell, n: N) -> Result<Self, Error> {
+        Ok(Self {
+            polyomino: Polyomino::from(vec![cell])?,
+            support: CageSupport::Given(n),
+        })
+    }
+
+    /// Returns the candidate [`Fill`] for `cell`.
+    ///
+    /// # Errors
+    /// Returns [`Error::MissingCell`] if `cell` is not in a [`Cage`].
+    pub fn get(&self, cell: Cell) -> Result<Fill, Error> {
+        let index = self.polyomino_index(cell)?;
+        let fill = match &self.support {
+            CageSupport::Commutative(_, _, memo) => memo.get(index)?,
+            CageSupport::NonCommutative(_, _, memo) => memo.get(index)?,
+            CageSupport::Given(n) => Fill::from(&[*n]),
+        };
+        Ok(fill)
+    }
+
+    /// Returns the `(CageOperator, target)` pair for this cage.
+    #[must_use]
+    pub fn op_target(&self) -> (CageOperator, T) {
+        match &self.support {
+            CageSupport::Commutative(op, target, _) => (
+                match op {
+                    CommutativeOperator::Add => CageOperator::Add,
+                    CommutativeOperator::Multiply => CageOperator::Multiply,
+                },
+                *target,
+            ),
+            CageSupport::NonCommutative(op, target, _) => (
+                match op {
+                    NonCommutativeOperator::Subtract => CageOperator::Subtract,
+                    NonCommutativeOperator::Divide => CageOperator::Divide,
+                },
+                *target,
+            ),
+            CageSupport::Given(n) => (CageOperator::Given, T::from(*n)),
+        }
+    }
+
+    /// Returns the index of `cell` in its containing [`Cage`].
+    ///
+    /// # Errors
+    /// Returns [`Error::MissingCell`] if `cell` is not in a [`Cage`].
+    fn polyomino_index(&self, cell: Cell) -> Result<usize, Error> {
+        self.polyomino
+            .iter()
+            .position(|c| *c == cell)
+            .ok_or(Error::MissingCell(cell))
+    }
+
+    /// Returns the polyomino (set of cells) for this cage.
+    #[must_use]
     pub const fn polyomino(&self) -> &Polyomino {
         &self.polyomino
     }
 
-    pub(crate) fn mdd(&self, n: usize) -> &Mdd {
-        let (cached_n, mdd) = self
-            .mdd
-            .get_or_init(|| (n, Mdd::build(n, &self.polyomino, self.operation.clone())));
-        debug_assert_eq!(*cached_n, n, "Cage::mdd called with inconsistent n");
-        mdd
+    /// Returns the operation (operator and target) for this cage.
+    #[must_use]
+    pub fn operation(&self) -> Operation {
+        let (operator, target) = self.op_target();
+        Operation {
+            operator,
+            target: u64::from(target),
+        }
+    }
+
+    /// Returns `true` if `cell` is part of this cage.
+    #[must_use]
+    pub fn contains(&self, cell: Cell) -> bool {
+        self.polyomino.contains(&cell)
+    }
+
+    /// Returns the cells in this cage as a `Vec`.
+    #[must_use]
+    pub fn cells(&self) -> Vec<Cell> {
+        self.polyomino.cells()
     }
 }
 
-impl PartialEq for Cage {
-    fn eq(&self, other: &Self) -> bool {
-        self.polyomino == other.polyomino && self.operation == other.operation
+impl Display for Cage {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Cage({} {})",
+            self.operation(),
+            self.cells()
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
     }
 }
 
-impl Eq for Cage {}
+/// The arithmetic operation for a cage: operator and target value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Operation {
+    /// The operator.
+    pub operator: CageOperator,
+    /// The target value.
+    pub target: u64,
+}
 
-impl Hash for Cage {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.polyomino.hash(state);
-        self.operation.hash(state);
+impl Operation {
+    /// Creates an operation from `operator` and `target`.
+    #[must_use]
+    pub const fn new(operator: CageOperator, target: u64) -> Self {
+        Self { operator, target }
     }
 }
 
-impl Ord for Cage {
-    fn cmp(&self, other: &Self) -> Ordering {
-        self.polyomino.cmp(&other.polyomino)
+impl Display for CageOperator {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Add => write!(f, "+"),
+            Self::Subtract => write!(f, "−"),
+            Self::Multiply => write!(f, "×"),
+            Self::Divide => write!(f, "÷"),
+            Self::Given => write!(f, "="),
+        }
     }
 }
 
-impl PartialOrd for Cage {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
+impl Display for Operation {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if self.operator == CageOperator::Given {
+            write!(f, "{}", self.target)
+        } else {
+            write!(f, "{}{}", self.operator, self.target)
+        }
+    }
+}
+
+/// Computes groups of cell indices (into the polyomino's iteration order) that share
+/// a row or column and therefore must hold distinct values.
+pub fn collinear_groups(polyomino: &Polyomino) -> Vec<Vec<usize>> {
+    let cells: Vec<Cell> = polyomino.iter().copied().collect();
+    let mut by_row: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
+    let mut by_col: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
+    for (i, &Cell(r, c)) in cells.iter().enumerate() {
+        by_row.entry(r).or_default().push(i);
+        by_col.entry(c).or_default().push(i);
+    }
+    by_row
+        .into_values()
+        .chain(by_col.into_values())
+        .filter(|g| g.len() >= 2)
+        .collect()
+}
+
+fn narrow_fills<M: Memo>(memo: &M, old_fills: &[Fill], n: usize) -> Result<Vec<Fill>, Error> {
+    match memo.narrow(old_fills) {
+        Ok(narrowed) => Ok((0..n)
+            .map(|i| narrowed.get(i).unwrap_or_default())
+            .collect()),
+        Err(EmptyFills) => Ok(vec![Fill::default(); n]),
+        Err(e) => Err(e),
+    }
+}
+
+impl Constraint<Grid, Cell, Fill, Error> for Cage {
+    fn propagate(&self, state: &Grid) -> Result<(Grid, Vec<Cell>), Error> {
+        let cells: Vec<Cell> = self.polyomino.iter().copied().collect();
+        let k = cells.len();
+        let old_fills: Vec<Fill> = cells
+            .iter()
+            .map(|&c| state.get(c))
+            .collect::<Result<_, _>>()?;
+        let new_fills = match &self.support {
+            CageSupport::Given(n) => {
+                // Singleton cell: fill is always the fixed value, intersected with current state.
+                let singleton = Fill::from(&[*n]);
+                vec![if old_fills[0].contains(*n) {
+                    singleton
+                } else {
+                    Fill::default()
+                }]
+            }
+            // Commutative: collinear distinctness is encoded in the MDD — use narrow directly.
+            CageSupport::Commutative(_, _, memo) => narrow_fills(memo, &old_fills, k)?,
+            // Non-commutative operators already guarantee distinct values (|a−b|≥1, max/min≥2).
+            CageSupport::NonCommutative(_, _, memo) => narrow_fills(memo, &old_fills, k)?,
+        };
+        Ok(state.apply_fills(&cells, &old_fills, new_fills))
+    }
+
+    fn in_scope(&self, variable: Cell) -> bool {
+        self.polyomino.contains(&variable)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_utils::{col_pair, l_shape, pair, singleton};
-    use crate::{Operator, Target};
+    use crate::grid::Grid;
+    use crate::operator::CommutativeOperator::{Add, Multiply};
+    use crate::operator::NonCommutativeOperator::{Divide, Subtract};
 
-    fn cage(polyomino: Polyomino, operator: Operator, target: Target) -> Cage {
-        Cage::new(polyomino, Operation { operator, target }).unwrap()
+    fn domino(r0: usize, c0: usize, r1: usize, c1: usize) -> Polyomino {
+        Polyomino::from([Cell(r0, c0), Cell(r1, c1)]).unwrap()
     }
 
-    // --- equality and hashing ignore the MDD cache ---
-
-    // `Cage`'s interior-mutable MDD cache never affects `Eq`/`Hash`, so it is
-    // sound as a `HashSet` key — see the same allow in `puzzle.rs`.
-    #[allow(clippy::mutable_key_type)]
-    #[test]
-    fn equality_and_hash_ignore_mdd_cache() {
-        use std::collections::HashSet;
-
-        let a = cage(pair(), Operator::Add, 5);
-        let b = cage(pair(), Operator::Add, 5);
-        // Materialize one cage's MDD but not the other's: the cache must not
-        // affect equality or hashing.
-        let _ = a.mdd(4);
-        assert_eq!(a, b);
-
-        let mut set = HashSet::new();
-        assert!(set.insert(a.clone()));
-        assert!(!set.insert(b), "b is equal to a, so it is a duplicate");
-
-        // A differing operation makes a distinct cage.
-        let c = cage(pair(), Operator::Add, 6);
-        assert_ne!(a, c);
-        assert!(set.insert(c));
+    fn triomino(r0: usize, c0: usize, r1: usize, c1: usize, r2: usize, c2: usize) -> Polyomino {
+        Polyomino::from([Cell(r0, c0), Cell(r1, c1), Cell(r2, c2)]).unwrap()
     }
 
-    // --- Given ---
+    // ---- commutative ----
 
     #[test]
-    fn given_singleton_yields_one_tuple() {
-        let tuples: Vec<_> = cage(singleton(), Operator::Given, 3)
-            .mdd(4)
-            .tuples()
-            .collect();
-        assert_eq!(tuples, vec![vec![3]]);
+    fn commutative_add_succeeds() {
+        assert!(Cage::commutative(4, domino(1, 1, 1, 2), Add, 5).is_ok());
     }
 
     #[test]
-    fn given_out_of_range_yields_no_tuples() {
-        // target 5 is not in 1..=4
-        assert!(
-            cage(singleton(), Operator::Given, 5)
-                .mdd(4)
-                .tuples()
-                .next()
-                .is_none()
-        );
-    }
-
-    // --- Add ---
-
-    #[test]
-    fn add_pair_yields_correct_tuples() {
-        // n=4, target=3: only {1,2} works; both orderings survive collinearity (same row)
-        let tuples: Vec<_> = cage(pair(), Operator::Add, 3).mdd(4).tuples().collect();
-        assert!(tuples.contains(&vec![1, 2]));
-        assert!(tuples.contains(&vec![2, 1]));
-        assert_eq!(tuples.len(), 2);
+    fn commutative_multiply_succeeds() {
+        assert!(Cage::commutative(4, domino(1, 1, 1, 2), Multiply, 6).is_ok());
     }
 
     #[test]
-    fn add_col_pair_collinearity_excludes_duplicates() {
-        // col_pair: (0,0),(1,0) — the same column, so values must differ.
-        // target=4, n=4: multisets are {1,3},{2,2},{3,1} but {2,2} has duplicate in column.
-        let tuples: Vec<_> = cage(col_pair(), Operator::Add, 4).mdd(4).tuples().collect();
-        for t in &tuples {
-            assert_ne!(t[0], t[1], "collinear cells must not repeat a value");
-        }
-    }
-
-    // --- Subtract ---
-
-    #[test]
-    fn subtract_pair_yields_correct_tuples() {
-        // n=4, target=1: pairs differing by 1 are (1,2),(2,1),(2,3),(3,2),(3,4),(4,3)
-        let tuples: Vec<_> = cage(pair(), Operator::Subtract, 1)
-            .mdd(4)
-            .tuples()
-            .collect();
-        assert_eq!(tuples.len(), 6);
-        for t in &tuples {
-            let diff = (i32::from(t[0]) - i32::from(t[1])).unsigned_abs();
-            assert_eq!(diff, 1);
-        }
-    }
-
-    // --- Multiply ---
-
-    #[test]
-    fn multiply_pair_yields_correct_tuples() {
-        // n=4, target=6: {2,3} → [2,3],[3,2]
-        let tuples: Vec<_> = cage(pair(), Operator::Multiply, 6)
-            .mdd(4)
-            .tuples()
-            .collect();
-        assert!(tuples.contains(&vec![2, 3]));
-        assert!(tuples.contains(&vec![3, 2]));
-        assert_eq!(tuples.len(), 2);
-    }
-
-    // --- Divide ---
-
-    #[test]
-    fn divide_pair_yields_correct_tuples() {
-        // n=4, target=2: pairs with ratio 2 are (1,2),(2,1),(2,4),(4,2)
-        let tuples: Vec<_> = cage(pair(), Operator::Divide, 2).mdd(4).tuples().collect();
-        assert_eq!(tuples.len(), 4);
-        for t in &tuples {
-            let (a, b) = (u16::from(t[0]), u16::from(t[1]));
-            assert!(a * 2 == b || b * 2 == a);
-        }
-    }
-
-    // --- collinearity with l-shape ---
-
-    #[test]
-    fn l_shape_tuples_satisfy_row_and_column_all_different() {
-        // l_shape: (0,0),(1,0),(1,1) — col 0 has cells 0 and 1; row 1 has cells 1 and 2.
-        let tuples: Vec<_> = cage(l_shape(), Operator::Add, 6).mdd(4).tuples().collect();
-        for t in &tuples {
-            assert_ne!(t[0], t[1], "col 0: cells (0,0) and (1,0) must differ");
-            assert_ne!(t[1], t[2], "row 1: cells (1,0) and (1,1) must differ");
-        }
-    }
-
-    // --- Operator Display ---
-
-    #[test]
-    fn operator_display() {
-        assert_eq!(Operator::Add.to_string(), "+");
-        assert_eq!(Operator::Subtract.to_string(), "−");
-        assert_eq!(Operator::Multiply.to_string(), "×");
-        assert_eq!(Operator::Divide.to_string(), "÷");
-        assert_eq!(Operator::Given.to_string(), "");
-    }
-
-    // --- Operation Display ---
-
-    #[test]
-    fn operation_display_with_symbol() {
-        assert_eq!(Operation::new(Operator::Add, 12).to_string(), "+12");
-        assert_eq!(Operation::new(Operator::Subtract, 3).to_string(), "−3");
-        assert_eq!(Operation::new(Operator::Multiply, 24).to_string(), "×24");
-        assert_eq!(Operation::new(Operator::Divide, 2).to_string(), "÷2");
+    fn commutative_triple_succeeds() {
+        assert!(Cage::commutative(4, triomino(1, 1, 1, 2, 1, 3), Add, 6).is_ok());
     }
 
     #[test]
-    fn operation_display_given_has_no_symbol() {
-        assert_eq!(Operation::new(Operator::Given, 7).to_string(), "7");
+    fn commutative_infeasible_target_returns_empty_fills() {
+        assert!(matches!(
+            Cage::commutative(4, domino(1, 1, 1, 2), Add, 9),
+            Err(EmptyFills)
+        ));
+    }
+
+    #[test]
+    fn commutative_stores_polyomino() {
+        let poly = domino(1, 1, 1, 2);
+        let cage = Cage::commutative(4, poly.clone(), Add, 5).unwrap();
+        assert_eq!(cage.polyomino, poly);
+    }
+
+    // ---- non_commutative ----
+
+    #[test]
+    fn non_commutative_subtract_succeeds() {
+        assert!(Cage::non_commutative(4, domino(1, 1, 1, 2), Subtract, 1).is_ok());
+    }
+
+    #[test]
+    fn non_commutative_divide_succeeds() {
+        assert!(Cage::non_commutative(4, domino(1, 1, 1, 2), Divide, 2).is_ok());
+    }
+
+    #[test]
+    fn non_commutative_infeasible_target_returns_empty_fills() {
+        // no pair in 1..=4 has |a-b| = 4
+        assert!(matches!(
+            Cage::non_commutative(4, domino(1, 1, 1, 2), Subtract, 4),
+            Err(EmptyFills)
+        ));
+    }
+
+    #[test]
+    fn non_commutative_stores_polyomino() {
+        let poly = domino(2, 1, 2, 2);
+        let cage = Cage::non_commutative(4, poly.clone(), Subtract, 1).unwrap();
+        assert_eq!(cage.polyomino, poly);
+    }
+
+    // ---- Constraint::propagate ----
+
+    fn full_grid(n: usize) -> Grid {
+        Grid::new(n).unwrap()
+    }
+
+    #[test]
+    fn cage_propagate_given_pins_cell() {
+        let cage = Cage::given(Cell(1, 1), 3).unwrap();
+        let (new_g, changed) = cage.propagate(&full_grid(4)).unwrap();
+        assert_eq!(new_g.get(Cell(1, 1)).unwrap(), Fill::from(&[3]));
+        assert_eq!(changed, vec![Cell(1, 1)]);
+    }
+
+    #[test]
+    fn cage_propagate_add_prunes_impossible_values() {
+        // Add 3 in a 4×4: valid pairs summing to 3 are (1,2),(2,1) — only values {1,2}
+        let cage = Cage::commutative(4, domino(1, 1, 1, 2), Add, 3).unwrap();
+        let (new_g, _) = cage.propagate(&full_grid(4)).unwrap();
+        assert_eq!(new_g.get(Cell(1, 1)).unwrap(), Fill::from(&[1, 2]));
+        assert_eq!(new_g.get(Cell(1, 2)).unwrap(), Fill::from(&[1, 2]));
+    }
+
+    #[test]
+    fn cage_propagate_cross_cell_add_prunes_partner() {
+        // Add 5 in 4×4: valid pairs are (1,4),(2,3),(3,2),(4,1).
+        // Pin cell A to {4}: only (4,1) survives, so B must narrow to {1}.
+        let cage = Cage::commutative(4, domino(1, 1, 1, 2), Add, 5).unwrap();
+        let g = full_grid(4).set(Cell(1, 1), Fill::from(&[4]));
+        let (new_g, changed) = cage.propagate(&g).unwrap();
+        assert_eq!(new_g.get(Cell(1, 2)).unwrap(), Fill::from(&[1]));
+        assert!(changed.contains(&Cell(1, 2)));
+    }
+
+    #[test]
+    fn cage_propagate_cross_cell_subtract_prunes_partner() {
+        // Subtract 3 in 4×4: only valid pair is (4,1).
+        // Pin cell A to {4}: B must narrow to {1}.
+        let cage = Cage::non_commutative(4, domino(1, 1, 1, 2), Subtract, 3).unwrap();
+        let g = full_grid(4).set(Cell(1, 1), Fill::from(&[4]));
+        let (new_g, _) = cage.propagate(&g).unwrap();
+        assert_eq!(new_g.get(Cell(1, 2)).unwrap(), Fill::from(&[1]));
+    }
+
+    #[test]
+    fn cage_propagate_no_valid_tuple_empties_values() {
+        // Grid has both cells pinned to {4}; Add 3 has no tuple (4,?) summing to 3
+        let g = full_grid(4)
+            .set(Cell(1, 1), Fill::from(&[4]))
+            .set(Cell(1, 2), Fill::from(&[4]));
+        let cage = Cage::commutative(4, domino(1, 1, 1, 2), Add, 3).unwrap();
+        let (new_g, changed) = cage.propagate(&g).unwrap();
+        assert!(new_g.get(Cell(1, 1)).unwrap().is_empty());
+        assert!(new_g.get(Cell(1, 2)).unwrap().is_empty());
+        assert_eq!(changed.len(), 2);
+    }
+
+    // ---- given ----
+
+    #[test]
+    fn given_succeeds() {
+        assert!(Cage::given(Cell(1, 1), 3).is_ok());
+    }
+
+    #[test]
+    fn given_stores_singleton_polyomino() {
+        let cage = Cage::given(Cell(2, 3), 5).unwrap();
+        assert!(cage.polyomino.contains(&Cell(2, 3)));
+        assert_eq!(cage.polyomino.len(), 1);
+    }
+
+    #[test]
+    fn given_stores_target_as_value() {
+        let cage = Cage::given(Cell(1, 1), 7).unwrap();
+        assert_eq!(cage.support, CageSupport::Given(7));
+    }
+
+    // ---- get ----
+
+    #[test]
+    fn get_missing_cell_returns_error() {
+        let cage = Cage::commutative(4, domino(1, 1, 1, 2), Add, 5).unwrap();
+        assert!(matches!(cage.get(Cell(9, 9)), Err(Error::MissingCell(_))));
+    }
+
+    #[test]
+    fn get_given_returns_singleton_fill() {
+        let cage = Cage::given(Cell(1, 1), 3).unwrap();
+        assert_eq!(cage.get(Cell(1, 1)).unwrap(), Fill::from(&[3]));
     }
 }

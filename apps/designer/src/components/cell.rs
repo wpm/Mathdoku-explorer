@@ -8,7 +8,7 @@
 
 use leptos::prelude::*;
 
-use crate::theme::{GREEN, INK, INK3, SANS};
+use crate::theme::{GREEN, INK, INK3, OP_INSET, SANS};
 
 /// Background rect and value digits for a single grid cell.
 #[component]
@@ -17,15 +17,17 @@ pub fn Cell(
     x: f64,
     y: f64,
     cell: f64,
-    values: Vec<u8>,
+    values: Vec<mathdoku::N>,
     fill: &'static str,
     /// Top margin reserved for the cage op label.
     top_margin: f64,
     /// Grid dimension n (used for fallback layout).
     n: usize,
-    /// The correct solution value for this cell, if known. When present and the
-    /// cell has multiple candidate values, this value is rendered larger and in green.
-    solution_value: Option<u8>,
+    /// The correct solution value for this cell, if known. For singleton cells
+    /// this is ignored (the value is already unambiguous). For multi-value cells
+    /// a small green digit is placed in the upper-right corner of the cell while
+    /// all candidates are rendered uniformly.
+    solution_value: Option<mathdoku::N>,
 ) -> impl IntoView {
     let glyphs = cell_glyphs(x, y, cell, &values, top_margin, n, solution_value);
 
@@ -52,17 +54,18 @@ type Glyph = (f64, f64, String, f64, &'static str, &'static str);
 
 /// Computes the positioned digit glyphs for a cell's values.
 ///
-/// A single value renders one large centred digit; multiple candidates are
-/// laid out as die-style pips (or a square sub-grid for counts above nine). When
-/// `solution_value` matches a candidate it is drawn larger and in green.
+/// A single value renders one large centred digit. Multiple candidates are laid
+/// out as die-style pips (or a square sub-grid for counts above nine), all
+/// rendered uniformly. When `solution_value` is present for a multi-value cell
+/// a small green digit is added in the upper-right corner.
 fn cell_glyphs(
     x: f64,
     y: f64,
     cell: f64,
-    values: &[u8],
+    values: &[mathdoku::N],
     top_margin: f64,
     n: usize,
-    solution_value: Option<u8>,
+    solution_value: Option<mathdoku::N>,
 ) -> Vec<Glyph> {
     let zone_w = 2.0f64.mul_add(-VALUE_EDGE, cell);
     let zone_h = cell - top_margin - VALUE_EDGE;
@@ -83,18 +86,16 @@ fn cell_glyphs(
     } else if !values.is_empty() {
         let zone_x = x + VALUE_EDGE;
         let zone_y = y + top_margin;
-        let solution_f = (value_f * 1.35).min(zone_h);
         if let Some(pips) = pip_layout(values.len()) {
             for (i, &(fx, fy)) in pips.iter().enumerate() {
                 if let Some(&v) = values.get(i) {
-                    let is_solution = solution_value == Some(v);
                     glyphs.push((
                         f64::from(fx).mul_add(zone_w, zone_x),
                         f64::from(fy).mul_add(zone_h, zone_y),
                         v.to_string(),
-                        if is_solution { solution_f } else { value_f },
-                        if is_solution { GREEN } else { INK3 },
-                        if is_solution { "600" } else { "normal" },
+                        value_f,
+                        INK3,
+                        "normal",
                     ));
                 }
             }
@@ -106,16 +107,29 @@ fn cell_glyphs(
             for (i, &v) in values.iter().enumerate() {
                 let sr = i / sub;
                 let sc = i % sub;
-                let is_solution = solution_value == Some(v);
                 glyphs.push((
                     (sc as f64 + 0.5).mul_add(sub_w, zone_x),
                     (sr as f64 + 0.5).mul_add(sub_h, zone_y),
                     v.to_string(),
-                    if is_solution { solution_f } else { value_f },
-                    if is_solution { GREEN } else { INK3 },
-                    if is_solution { "600" } else { "normal" },
+                    value_f,
+                    INK3,
+                    "normal",
                 ));
             }
+        }
+
+        // Green solution-value digit in the upper-right corner, aligned with
+        // the cage op label: same font size, same top inset (OP_INSET).
+        if let Some(sv) = solution_value {
+            let op_f = 2.0f64.mul_add(-OP_INSET, top_margin).max(7.0);
+            glyphs.push((
+                x + cell - VALUE_EDGE - op_f * 0.35,
+                y + OP_INSET + op_f * 0.5,
+                sv.to_string(),
+                op_f,
+                GREEN,
+                "600",
+            ));
         }
     }
 
@@ -255,20 +269,34 @@ mod tests {
     }
 
     #[test]
-    fn glyphs_highlight_solution_value_in_green() {
+    fn glyphs_solution_value_badge_in_upper_right_for_multi_value() {
+        // top_margin=16.0, OP_INSET=4.0 → op_f = 16.0 - 8.0 = 8.0
         let glyphs = cell_glyphs(0.0, 0.0, 60.0, &[1, 2, 3], 16.0, 4, Some(2));
-        // The candidate equal to the solution value is green and bold; others grey.
-        let two = glyphs.iter().find(|g| g.2 == "2").unwrap();
-        let one = glyphs.iter().find(|g| g.2 == "1").unwrap();
-        assert_eq!(two.4, GREEN);
-        assert_eq!(two.5, "600");
-        assert_eq!(one.4, INK3);
-        assert_eq!(one.5, "normal");
+        // Candidates are all rendered uniformly in INK3.
+        let candidate_glyphs: Vec<_> = glyphs.iter().filter(|g| g.4 == INK3).collect();
+        assert_eq!(candidate_glyphs.len(), 3);
+        assert!(candidate_glyphs.iter().all(|g| g.5 == "normal"));
+        // A separate green badge for the solution value is appended last.
+        let badge = glyphs.last().unwrap();
+        assert_eq!(badge.2, "2");
+        assert_eq!(badge.4, GREEN);
+        assert_eq!(badge.5, "600");
+        // Badge is in the right half of the cell.
+        assert!(badge.0 > 30.0, "badge should be in the right half");
+        // Badge centre is at y + OP_INSET + op_f/2 = 0 + 4 + 4 = 8 — well above top_margin (16).
+        assert!(badge.1 < 16.0, "badge should be above the candidate zone");
+    }
+
+    #[test]
+    fn glyphs_no_badge_without_solution_value() {
+        let glyphs = cell_glyphs(0.0, 0.0, 60.0, &[1, 2, 3], 16.0, 4, None);
+        assert_eq!(glyphs.len(), 3);
+        assert!(glyphs.iter().all(|g| g.4 != GREEN));
     }
 
     #[test]
     fn glyphs_more_than_nine_use_square_fallback() {
-        let values: Vec<u8> = (1..=10).collect();
+        let values: Vec<mathdoku::N> = (1..=10).collect();
         let glyphs = cell_glyphs(0.0, 0.0, 120.0, &values, 16.0, 10, None);
         // The fallback grid renders every candidate.
         assert_eq!(glyphs.len(), 10);

@@ -11,7 +11,7 @@
 
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use mathdoku::{Cage, Cell, Grid, Operation, Operator, Polyomino, Target, operators_for};
+use mathdoku::{Cage, Cell, N, Operator, Polyomino, Target, operators_for};
 use mathdoku_designer_core::State;
 
 use super::cage::Cage as CageComponent;
@@ -39,6 +39,11 @@ pub fn Puzzle(
     undo_stack: RwSignal<Vec<State>>,
     redo_stack: RwSignal<Vec<State>>,
     pending_commit: RwSignal<Option<PendingCommit>>,
+    /// If `Some(poly)` on mount, immediately open the operation selector for
+    /// that polyomino and clear the signal. Set by `demote_cage` so the
+    /// newly-mounted Puzzle opens its own selector rather than calling back
+    /// into the disposed old Puzzle's scope.
+    pending_selector: RwSignal<Option<Polyomino>>,
     on_puzzle_change: Callback<State>,
     on_state_change: Callback<State>,
     on_error: Callback<String>,
@@ -58,29 +63,32 @@ pub fn Puzzle(
     let cage_cells: Vec<Vec<Cell>> = cages.iter().map(|(c, _)| c.clone()).collect();
     let (colors, cage_index) = assign_colors(n, &cage_cells, CAGE_PALETTE.len());
 
-    // Propagate cage constraints from an unconstrained grid so each cell's
-    // values show all candidates still possible given the cages, not just the solution.
-    let propagated = Grid::new(n)
-        .and_then(|g| g.constrain(&state.puzzle))
-        .unwrap_or_else(|_| state.current.clone());
-    let mut cell_values = vec![vec![vec![]; n]; n];
-    let mut solution_values = vec![vec![None::<u8>; n]; n];
-    for (r, row) in cell_values.iter_mut().enumerate() {
+    // In With-Solution mode, constrain the fixed Latin square by the design
+    // cages so each cell shows the values still reachable given both the
+    // solution and the cages. In Without-Solution mode, use the puzzle's own
+    // propagated grid.
+    let grid = state.current().unwrap_or_else(|_| state.puzzle.clone());
+    let mut get_values = vec![vec![vec![]; n]; n];
+    let mut solution_values = vec![vec![None::<N>; n]; n];
+    for (r, row) in get_values.iter_mut().enumerate() {
         for (c, slot) in row.iter_mut().enumerate() {
             let cell_ref = Cell::new(r, c);
-            if let Ok(vals) = propagated.cell_values(cell_ref) {
+            if let Ok(vals) = grid.get(cell_ref) {
                 *slot = vals.values();
             }
             // Without-Solution mode has no solution values to overlay.
             if let Some(solution) = &state.solution
-                && let Ok(sv) = solution.cell_values(cell_ref)
+                && let Ok(sv) = solution.get(cell_ref)
             {
                 solution_values[r][c] = sv.values().first().copied();
             }
         }
     }
 
-    let partial_solution = PartialSolution::new(state.puzzle.clone(), state.current.clone());
+    let partial_solution = PartialSolution::new(
+        state.puzzle.clone(),
+        state.current().unwrap_or_else(|_| state.puzzle.clone()),
+    );
 
     let grid_size = cell * n as f64;
     let total = 2.0f64.mul_add(MARGIN, grid_size);
@@ -201,12 +209,22 @@ pub fn Puzzle(
         }));
     });
 
+    // If a demote was just performed, open the selector for the demoted cage.
+    // `pending_selector` is set by `demote_cage` after the state update that
+    // causes this Puzzle to mount; consuming it here (in this new Puzzle's
+    // scope) avoids the stale-callback bug where the old Puzzle's `open_selector`
+    // would be called from a disposed reactive scope.
+    if let Some(poly) = pending_selector.get_untracked() {
+        pending_selector.set(None);
+        open_selector.run(poly);
+    }
+
     // Helper: if the active cell is in a provisional cage, remove that cage.
     let remove_provisional = move |st: &State, active_cell: Cell| {
         if let Some(poly) = st
             .provisional_cages
             .iter()
-            .find(|p| p.cells().contains(&active_cell))
+            .find(|p| p.contains(&active_cell))
             .cloned()
         {
             let mut new_st = st.clone();
@@ -262,7 +280,7 @@ pub fn Puzzle(
         let key = ev.key();
         let shift = ev.shift_key();
         let st = designer_state.get_untracked();
-        let (r, c) = (st.active.row, st.active.column);
+        let (r, c) = (st.active.row(), st.active.column());
 
         // Operation selector intercepts all keys when active. The exception is the
         // Without-Solution target dropdown (a native <select>): let it own
@@ -414,7 +432,7 @@ pub fn Puzzle(
                             redo_stack,
                             designer_state,
                             on_puzzle_change,
-                            open_selector,
+                            pending_selector,
                             on_error,
                         );
                     }
@@ -449,7 +467,7 @@ pub fn Puzzle(
                 let poly = if let Some(p) = st
                     .provisional_cages
                     .iter()
-                    .find(|p| p.cells().contains(&active_cell))
+                    .find(|p| p.contains(&active_cell))
                     .cloned()
                 {
                     p
@@ -512,7 +530,7 @@ pub fn Puzzle(
         .map(|(r, c)| {
             let (x, y) = origin(cell, r, c);
             let fill = cage_index[r][c].map_or(BG, |i| CAGE_PALETTE[colors[i] % CAGE_PALETTE.len()]);
-            let values = cell_values[r][c].clone();
+            let values = get_values[r][c].clone();
             let solution_value = solution_values[r][c];
             view! { <CellComponent x=x y=y cell=cell values=values fill=fill top_margin=top_margin n=n solution_value=solution_value /> }
         })
@@ -522,7 +540,7 @@ pub fn Puzzle(
         .iter()
         .map(|(cells, cage)| {
             let a = anchor(cells);
-            let (x, y) = origin(cell, a.row, a.column);
+            let (x, y) = origin(cell, a.row(), a.column());
             let operation = cage.operation();
             view! { <CageComponent x=x y=y op_f=op_f operation=operation /> }.into_any()
         })
@@ -654,7 +672,7 @@ fn parked_cages(state: &State, poly: &Polyomino) -> std::collections::BTreeSet<P
     state
         .provisional_cages
         .iter()
-        .filter(|p| p.cells() != poly.cells())
+        .filter(|p| *p != poly)
         .cloned()
         .collect()
 }
@@ -687,24 +705,17 @@ fn singleton_digit_commit(state: &State, key: &str) -> Result<Option<SingletonDi
     if state.solution.is_some() || key.len() != 1 {
         return Ok(None);
     }
-    let Ok(value) = key.parse::<u8>() else {
+    let Ok(value) = key.parse::<N>() else {
         return Ok(None);
     };
     let active = state.active;
 
     // Covered by a committed cage → no shortcut.
-    if state
-        .puzzle
-        .cages()
-        .any(|cage| cage.cells().contains(&active))
-    {
+    if state.puzzle.cages().any(|cage| cage.contains(active)) {
         return Ok(None);
     }
     // Mid-draw inside a multi-cell provisional cage → no shortcut.
-    if let Some(p) = state
-        .provisional_cages
-        .iter()
-        .find(|p| p.cells().contains(&active))
+    if let Some(p) = state.provisional_cages.iter().find(|p| p.contains(&active))
         && p.len() > 1
     {
         return Ok(None);
@@ -712,7 +723,9 @@ fn singleton_digit_commit(state: &State, key: &str) -> Result<Option<SingletonDi
 
     let poly = Polyomino::from_cells(&[active])?;
     let target = Target::from(value);
-    let cage = Cage::new(poly.clone(), Operation::new(Operator::Given, target))?;
+    let n = N::try_from(state.puzzle.n())
+        .map_err(|_| mathdoku::Error::InvalidGridSize(state.puzzle.n()))?;
+    let cage = Cage::new(n, poly.clone(), Operator::Given, target)?;
     if !crate::feasibility::is_globally_feasible(&state.puzzle, &cage) {
         return Ok(None);
     }
@@ -722,7 +735,7 @@ fn singleton_digit_commit(state: &State, key: &str) -> Result<Option<SingletonDi
     let parked = state
         .provisional_cages
         .iter()
-        .filter(|p| !p.cells().contains(&active))
+        .filter(|p| !p.contains(&active))
         .cloned()
         .collect();
     Ok(Some(SingletonDigitCommit {
@@ -747,7 +760,7 @@ fn step_provisional_cage(r: usize, c: usize, tr: usize, tc: usize, state: State)
     let active = state
         .provisional_cages
         .iter()
-        .find(|p| p.cells().contains(&current))
+        .find(|p| p.contains(&current))
         .cloned();
 
     let (cage, mut remaining): (Polyomino, BTreeSet<Polyomino>) = match active {
@@ -794,7 +807,7 @@ fn step_provisional_cage(r: usize, c: usize, tr: usize, tc: usize, state: State)
 #[allow(clippy::unwrap_used, clippy::panic)]
 mod tests {
     use super::{singleton_digit_commit, step_provisional_cage};
-    use mathdoku::{Cage, Cell, Operation, Operator, Polyomino};
+    use mathdoku::{Cage, Cell, N, Operator, Polyomino};
     use mathdoku_designer_core::State;
 
     fn poly(positions: &[(usize, usize)]) -> Polyomino {
@@ -802,8 +815,9 @@ mod tests {
         Polyomino::from_cells(&cells).unwrap()
     }
 
-    fn given_cage(r: usize, c: usize, target: u64) -> Cage {
-        Cage::new(poly(&[(r, c)]), Operation::new(Operator::Given, target)).unwrap()
+    fn given_cage(n: N, r: usize, c: usize, target: u64) -> Cage {
+        let target = mathdoku::T::try_from(target).unwrap();
+        Cage::new(n, poly(&[(r, c)]), Operator::Given, target).unwrap()
     }
 
     #[test]
@@ -842,7 +856,11 @@ mod tests {
     #[test]
     fn digit_rejected_on_cell_in_committed_cage() {
         let mut st = State::new(4).unwrap();
-        st.puzzle = st.puzzle.insert_cage(given_cage(0, 0, 2)).unwrap();
+        st.puzzle = st
+            .puzzle
+            .insert_cage(&given_cage(4, 0, 0, 2))
+            .unwrap()
+            .unwrap();
         st.active = Cell::new(0, 0);
         assert!(singleton_digit_commit(&st, "3").unwrap().is_none());
     }
@@ -885,7 +903,10 @@ mod tests {
     }
 
     fn cells_of(p: &Polyomino) -> Vec<(usize, usize)> {
-        p.cells().into_iter().map(|c| (c.row, c.column)).collect()
+        p.cells()
+            .into_iter()
+            .map(|c| (c.row(), c.column()))
+            .collect()
     }
 
     #[test]

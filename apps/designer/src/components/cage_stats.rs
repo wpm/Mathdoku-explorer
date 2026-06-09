@@ -19,7 +19,7 @@ pub fn CageStats() -> impl IntoView {
 
     move || {
         let sel = designer_state.get().active;
-        let cage_idx = partial_solution.cage_index_at(sel.row, sel.column);
+        let cage_idx = partial_solution.cage_index_at(sel.row(), sel.column());
         let viable = cage_idx.and_then(|i| partial_solution.viable_counts(i));
 
         viable.map(|(multisets, tuples)| {
