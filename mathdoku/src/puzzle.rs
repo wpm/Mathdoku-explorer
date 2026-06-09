@@ -5,7 +5,7 @@ use crate::cage::{Cage, collinear_groups};
 use crate::csp::{Constraint, generalized_arc_consistency};
 use crate::fill::Fill;
 use crate::grid::{AllDifferent, Grid as InternalGrid};
-use crate::mdd::Mdd;
+use crate::mdd::CageDp;
 use crate::memo::Memo;
 use crate::operator::{CommutativeOperator, NonCommutativeOperator};
 use crate::polyomino::{Cell, Polyomino};
@@ -299,7 +299,7 @@ impl Puzzle {
         let result = candidates
             .iter()
             .copied()
-            .filter(|&op| operator_is_feasible(self, polyomino, n, k, op, &fills))
+            .filter(|&op| operator_is_feasible(self, polyomino, n, op, &fills))
             .collect();
         Ok(result)
     }
@@ -325,13 +325,15 @@ impl Puzzle {
             .iter()
             .map(|&cell| self.grid.get(cell))
             .collect::<Result<_, _>>()?;
-        let k = N::try_from(fills.len()).unwrap_or(N::MAX);
         let Some(range) = target_range(operation, &fills) else {
             return Ok(vec![]);
         };
+        let lines = collinear_groups(polyomino);
         let result = range
             .into_iter()
-            .filter(|&target| target_is_feasible(self, polyomino, n, k, operation, &fills, target))
+            .filter(|&target| {
+                target_is_feasible(self, polyomino, n, operation, &fills, target, &lines)
+            })
             .collect();
         Ok(result)
     }
@@ -561,47 +563,52 @@ fn target_range(op: CageOperator, fills: &[Fill]) -> Option<std::ops::RangeInclu
 
 /// Returns true if `op` with some target is feasible for `polyomino` in `puzzle`.
 ///
-/// For each target in the fill-derived range: builds the Memo, narrows it to the
-/// fills, and if tuples survive checks the fixpoint.
+/// For each target in the fill-derived range: checks for a tuple consistent
+/// with the fills, and if one exists checks the fixpoint. The collinear lines
+/// are target-independent, so they are computed once before the scan.
 fn operator_is_feasible(
     puzzle: &Puzzle,
     polyomino: &Polyomino,
     n: N,
-    k: N,
     op: CageOperator,
     fills: &[Fill],
 ) -> bool {
     let Some(range) = target_range(op, fills) else {
         return false;
     };
+    let lines = collinear_groups(polyomino);
     range
         .into_iter()
-        .any(|target| target_is_feasible(puzzle, polyomino, n, k, op, fills, target))
+        .any(|target| target_is_feasible(puzzle, polyomino, n, op, fills, target, &lines))
 }
 
-/// Returns true if `op` with `target` is feasible: the Memo narrowed to fills is
-/// non-empty and inserting the cage yields a non-empty fixpoint.
+/// Returns true if `op` with `target` is feasible: some tuple consistent with
+/// the fills exists and inserting the cage yields a non-empty fixpoint.
+///
+/// The commutative arms drive the cage DP lazily and exit at the first
+/// witness; no diagram is built or narrowed. `lines` is the polyomino's
+/// collinear grouping (see [`collinear_groups`]), hoisted to the caller
+/// because it is the same for every target.
 fn target_is_feasible(
     puzzle: &Puzzle,
     polyomino: &Polyomino,
     n: N,
-    k: N,
     op: CageOperator,
     fills: &[Fill],
     target: T,
+    lines: &[Vec<usize>],
 ) -> bool {
+    let k = N::try_from(fills.len()).unwrap_or(N::MAX);
     let has_consistent_tuple = match op {
         CageOperator::Given => N::try_from(target).is_ok_and(|v| fills[0].contains(v)),
-        CageOperator::Add => {
-            let lines = collinear_groups(polyomino);
-            Mdd::new(n, k, CommutativeOperator::Add, target, &lines)
-                .is_ok_and(|m| m.narrow(fills).is_ok())
-        }
-        CageOperator::Multiply => {
-            let lines = collinear_groups(polyomino);
-            Mdd::new(n, k, CommutativeOperator::Multiply, target, &lines)
-                .is_ok_and(|m| m.narrow(fills).is_ok())
-        }
+        CageOperator::Add => CageDp::new(n, k, CommutativeOperator::Add, target, lines)
+            .solutions(fills)
+            .next()
+            .is_some(),
+        CageOperator::Multiply => CageDp::new(n, k, CommutativeOperator::Multiply, target, lines)
+            .solutions(fills)
+            .next()
+            .is_some(),
         CageOperator::Subtract => {
             Table::non_commutative(n, NonCommutativeOperator::Subtract, target)
                 .is_ok_and(|t| t.narrow(fills).is_ok())
@@ -746,7 +753,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "WIP: This is too slow."]
     fn possible_operations_size_10_returns_only_commutative() {
         // A 10-cell snake across two columns of a 9×9 grid: col 1 rows 1–5,
         // col 2 rows 5–9. No row contains more than 2 cage cells, so AllDifferent

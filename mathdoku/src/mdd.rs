@@ -2,6 +2,10 @@
 //!
 //! Only commutative (add, multiply) constraints are supported. For non-commutative
 //! constraints (subtract, divide), use `Table` instead.
+//!
+//! The underlying cage dynamic program ([`CageDp`]) has two drivers: the [`Mdd`]
+//! builder (compile once, narrow many — for propagation) and the lazy
+//! [`CageSolutions`] iterator (one-shot existence and enumeration queries).
 use crate::Error::InvalidCellCageIndex;
 use crate::fill::Fill;
 use crate::memo::Memo;
@@ -293,7 +297,7 @@ impl Mdd {
 
     fn at_target(&self, node: &Node) -> bool {
         Self::log_if(
-            self.dp.constraint.target_reached(node.state.value),
+            self.dp.target_reached(node.state.value),
             node.depth,
             &format!("{node} Target reached"),
         )
@@ -398,9 +402,10 @@ impl Memo for Mdd {
 /// `root`/`step`/`accept` transition over [`State`].
 ///
 /// [`Mdd`] construction consumes this DP, but the DP itself is standalone:
-/// it can be driven directly without building a diagram.
+/// it can also be driven lazily via [`CageDp::solutions`] without building
+/// a diagram.
 #[derive(Clone, PartialEq, Eq, Debug)]
-struct CageDp {
+pub struct CageDp {
     n: N,
     constraint: Constraint,
     /// Collinear-line metadata: for each depth `d`, which line indices include
@@ -409,7 +414,11 @@ struct CageDp {
 }
 
 impl CageDp {
-    fn new(n: N, k: N, operator: CommutativeOperator, target: T, lines: &[Vec<usize>]) -> Self {
+    /// Constructs the DP for all `k`-tuples of values in `1..=n` satisfying
+    /// `operator` applied to the tuple equals `target`, with the given
+    /// collinear distinctness constraints (see [`Mdd::new`] for the `lines`
+    /// format).
+    pub fn new(n: N, k: N, operator: CommutativeOperator, target: T, lines: &[Vec<usize>]) -> Self {
         Self {
             n,
             constraint: Constraint {
@@ -468,6 +477,137 @@ impl CageDp {
     /// placed and the accumulated value equals the target.
     const fn accept(&self, depth: T, state: &State) -> bool {
         depth == self.constraint.arity && state.value == self.constraint.target
+    }
+
+    /// The recursion cutoff for drivers of this DP: returns true if the
+    /// accumulated `value` has reached the point where no deeper placement
+    /// can accept, keeping the operator-aware arithmetic inside the DP.
+    const fn target_reached(&self, value: T) -> bool {
+        self.constraint.target_reached(value)
+    }
+
+    /// Returns a lazy iterator over this DP's accepting tuples whose value at
+    /// each depth `d` lies in `support[d]`.
+    ///
+    /// Construction and narrowing are fused into one guarded traversal, and
+    /// the iterator exits early: existence is `solutions(..).next().is_some()`
+    /// without ever building a diagram. `support` must have one [`Fill`] per
+    /// cage cell.
+    pub fn solutions<'a>(&'a self, support: &'a [Fill]) -> CageSolutions<'a> {
+        debug_assert_eq!(support.len(), self.constraint.arity as usize);
+        CageSolutions {
+            dp: self,
+            support,
+            stack: vec![Frame {
+                state: self.root(),
+                label: 0,
+                next_v: 1,
+                found: false,
+            }],
+            dead: HashSet::new(),
+        }
+    }
+}
+
+/// A lazy depth-first iterator over a [`CageDp`]'s accepting tuples,
+/// restricted by a per-depth support.
+///
+/// Each item is one accepting tuple in cage cell order. The traversal is
+/// driven entirely by [`CageDp::step`] / [`CageDp::accept`] plus the support
+/// guard, and memoizes states proven to have no accepting descendant in
+/// `dead`, keeping exhaustion `O(states)` instead of `O(paths)`.
+///
+/// Obtained via [`CageDp::solutions`].
+#[must_use]
+pub struct CageSolutions<'a> {
+    dp: &'a CageDp,
+    /// Per-depth allowed values; guards each step.
+    support: &'a [Fill],
+    /// The current root → node path; `stack[d]` holds the [`State`] at depth `d`.
+    stack: Vec<Frame>,
+    /// States proven to have no accepting descendant under `support`.
+    dead: HashSet<Node>,
+}
+
+/// One depth of the [`CageSolutions`] DFS path.
+struct Frame {
+    state: State,
+    /// The value on the edge from the parent frame (unused for the root).
+    label: N,
+    /// The next child value to try; `n + 1` once exhausted.
+    next_v: N,
+    /// Whether an accepting descendant has been found below this frame.
+    found: bool,
+}
+
+impl CageSolutions<'_> {
+    /// Pops the exhausted top frame: memoizes it as dead if no accepting
+    /// descendant was found, otherwise propagates `found` to its parent.
+    fn pop_frame(&mut self) {
+        // The stack depth is a cage position index, bounded by k <= 9.
+        #[allow(clippy::cast_possible_truncation)]
+        let depth = (self.stack.len() - 1) as T;
+        if let Some(frame) = self.stack.pop() {
+            if frame.found {
+                if let Some(parent) = self.stack.last_mut() {
+                    parent.found = true;
+                }
+            } else {
+                let _ = self.dead.insert(Node {
+                    depth,
+                    state: frame.state,
+                });
+            }
+        }
+    }
+}
+
+impl Iterator for CageSolutions<'_> {
+    type Item = Vec<N>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let depth = self.stack.len().checked_sub(1)?;
+            let frame = self.stack.last_mut()?;
+            let v = frame.next_v;
+            if v > self.dp.n {
+                self.pop_frame();
+                continue;
+            }
+            frame.next_v = v + 1;
+            if !self.support[depth].contains(v) {
+                continue;
+            }
+            // depth is a cage position index, bounded by k <= 9.
+            #[allow(clippy::cast_possible_truncation)]
+            let state = match self.dp.step(depth as T, &frame.state, v) {
+                Step::Stop => {
+                    frame.next_v = self.dp.n + 1;
+                    continue;
+                }
+                Step::Skip => continue,
+                Step::Tail(state) => state,
+            };
+            #[allow(clippy::cast_possible_truncation)]
+            let child = Node {
+                depth: (depth + 1) as T,
+                state,
+            };
+            if self.dp.accept(child.depth, &child.state) {
+                frame.found = true;
+                let mut tuple: Vec<N> = self.stack.iter().skip(1).map(|f| f.label).collect();
+                tuple.push(v);
+                return Some(tuple);
+            }
+            if child.depth < self.dp.constraint.arity && !self.dead.contains(&child) {
+                self.stack.push(Frame {
+                    state: child.state,
+                    label: v,
+                    next_v: 1,
+                    found: false,
+                });
+            }
+        }
     }
 }
 
@@ -623,6 +763,9 @@ mod tests {
     fn no_lines() -> Vec<Vec<usize>> {
         vec![]
     }
+
+    /// A cage test case: `(n, k, op, target, lines)`.
+    type CageCase = (N, N, CommutativeOperator, T, Vec<Vec<usize>>);
 
     // ---- get ----
 
@@ -949,17 +1092,19 @@ mod tests {
         );
     }
 
-    // ---- CageDp standalone ----
+    // ---- CageSolutions iterator ----
 
     #[test]
-    fn cage_dp_enumerates_l_cage_tuples_without_an_mdd() {
+    fn solutions_enumerates_l_cage_tuples_without_an_mdd() {
         setup();
         // The +6 L-cage in n=4: row line [0,1], column line [0,2].
-        // Driven through root/step/accept alone — no Mdd is constructed.
+        // Driven through the lazy iterator alone — no Mdd is constructed.
         let lines = vec![vec![0, 1], vec![0, 2]];
         let dp = CageDp::new(4, 3, Add, 6, &lines);
+        let mut tuples: Vec<Vec<N>> = dp.solutions(&full_support(4, 3)).collect();
+        tuples.sort();
         assert_eq!(
-            dp_tuples(&dp, 3),
+            tuples,
             vec![
                 vec![1, 2, 3],
                 vec![1, 3, 2],
@@ -972,39 +1117,80 @@ mod tests {
         );
     }
 
-    /// Enumerates a DP's accepted tuples by driving `root`/`step`/`accept`
-    /// directly, without building a diagram.
-    fn dp_tuples(dp: &CageDp, k: T) -> Vec<Vec<N>> {
-        fn go(
-            dp: &CageDp,
-            k: T,
-            depth: T,
-            state: &State,
-            path: &mut Vec<N>,
-            out: &mut Vec<Vec<N>>,
-        ) {
-            if depth == k {
-                if dp.accept(depth, state) {
-                    out.push(path.clone());
+    #[test]
+    fn solutions_agree_with_mdd_tuples_across_cage_shapes() {
+        setup();
+        let cases: Vec<CageCase> = vec![
+            (4, 2, Add, 4, vec![vec![0, 1]]),              // collinear domino
+            (4, 2, Add, 4, no_lines()),                    // free domino
+            (4, 3, Add, 6, vec![vec![0, 1], vec![0, 2]]),  // L-cage
+            (6, 3, Multiply, 24, vec![vec![0, 1, 2]]),     // 3-in-a-row
+            (5, 4, Add, 12, vec![vec![0, 1], vec![2, 3]]), // S-tetromino
+        ];
+        for (n, k, op, target, lines) in cases {
+            let dp = CageDp::new(n, k, op, target, &lines);
+            let mut actual: Vec<Vec<N>> = dp.solutions(&full_support(n, k)).collect();
+            actual.sort();
+            let expected = sorted_tuples(&Mdd::new(n, k, op, target, &lines).unwrap());
+            assert_eq!(actual, expected, "n={n} k={k} op={op:?} target={target}");
+        }
+    }
+
+    #[test]
+    fn solutions_existence_matches_mdd_construction_over_grid() {
+        setup();
+        for n in 2u8..=6 {
+            for k in 2u8..=4 {
+                let support = full_support(n, k);
+                let max_sum = T::from(n) * T::from(k) + 1;
+                for target in 1..=max_sum {
+                    assert_existence_matches_mdd(n, k, Add, target, &support);
                 }
-                return;
-            }
-            for v in 1..=dp.n {
-                match dp.step(depth, state, v) {
-                    Step::Stop => break,
-                    Step::Skip => {}
-                    Step::Tail(next) => {
-                        path.push(v);
-                        go(dp, k, depth + 1, &next, path, out);
-                        let _ = path.pop();
-                    }
+                let max_product = T::from(n).pow(u32::from(k)) + 1;
+                for target in 1..=max_product {
+                    assert_existence_matches_mdd(n, k, Multiply, target, &support);
                 }
             }
         }
-        let mut out = Vec::new();
-        go(dp, k, 0, &dp.root(), &mut Vec::new(), &mut out);
-        out.sort();
-        out
+    }
+
+    #[test]
+    fn solutions_feasibility_under_support_matches_build_and_narrow() {
+        setup();
+        // Restrict each position to each singleton in turn and check that the
+        // early-exit witness agrees with a full build-and-narrow.
+        let cases: Vec<CageCase> = vec![
+            (4, 3, Add, 6, vec![vec![0, 1], vec![0, 2]]),
+            (4, 2, Add, 4, vec![vec![0, 1]]),
+            (6, 3, Multiply, 24, vec![vec![0, 1, 2]]),
+        ];
+        for (n, k, op, target, lines) in cases {
+            for position in 0..usize::from(k) {
+                for v in 1..=n {
+                    let mut support = full_support(n, k);
+                    support[position] = Fill::singleton(v);
+                    let dp = CageDp::new(n, k, op, target, &lines);
+                    let lazy = dp.solutions(&support).next().is_some();
+                    let narrowed = Mdd::new(n, k, op, target, &lines)
+                        .is_ok_and(|m| m.narrow(&support).is_ok());
+                    assert_eq!(
+                        lazy, narrowed,
+                        "n={n} k={k} op={op:?} target={target} position={position} v={v}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn solutions_is_exhausted_after_last_tuple() {
+        setup();
+        let dp = CageDp::new(4, 2, Add, 5, &no_lines());
+        let support = full_support(4, 2);
+        let mut solutions = dp.solutions(&support);
+        assert_eq!(solutions.by_ref().count(), 4); // (1,4),(2,3),(3,2),(4,1)
+        assert_eq!(solutions.next(), None);
+        assert_eq!(solutions.next(), None);
     }
 
     // ---- brute-force oracle cross-check ----
@@ -1028,6 +1214,25 @@ mod tests {
     }
 
     // ---- helpers ----
+
+    fn full_support(n: N, k: N) -> Vec<Fill> {
+        vec![Fill::all(usize::from(n)); usize::from(k)]
+    }
+
+    fn assert_existence_matches_mdd(
+        n: N,
+        k: N,
+        op: CommutativeOperator,
+        target: T,
+        support: &[Fill],
+    ) {
+        let dp = CageDp::new(n, k, op, target, &no_lines());
+        assert_eq!(
+            dp.solutions(support).next().is_some(),
+            Mdd::new(n, k, op, target, &no_lines()).is_ok(),
+            "n={n} k={k} op={op:?} target={target}"
+        );
+    }
 
     fn forbidden(pairs: &[(T, &[N])]) -> HashMap<T, HashSet<N>> {
         pairs
