@@ -358,7 +358,18 @@ pub fn collinear_groups(polyomino: &Polyomino) -> Vec<Vec<usize>> {
         .collect()
 }
 
-fn narrow_fills<M: Memo>(memo: &M, old_fills: &[Fill], n: usize) -> Result<Vec<Fill>, Error> {
+fn narrow_fills<M: Memo>(
+    memo: &M,
+    old_fills: &[Fill],
+    n: usize,
+    grid_n: usize,
+) -> Result<Vec<Fill>, Error> {
+    // All-full input fills exclude nothing, so narrowing would reproduce the
+    // memo's cached base projection; return it directly and skip the narrow.
+    let full = Fill::all(grid_n);
+    if old_fills.iter().all(|&f| f == full) {
+        return (0..n).map(|i| memo.get(i)).collect();
+    }
     match memo.narrow(old_fills) {
         Ok(narrowed) => Ok((0..n)
             .map(|i| narrowed.get(i).unwrap_or_default())
@@ -387,9 +398,13 @@ impl Constraint<Grid, Cell, Fill, Error> for Cage {
                 }]
             }
             // Commutative: collinear distinctness is encoded in the MDD — use narrow directly.
-            CageSupport::Commutative(_, _, memo) => narrow_fills(memo, &old_fills, k)?,
+            CageSupport::Commutative(_, _, memo) => {
+                narrow_fills(memo, &old_fills, k, state.size())?
+            }
             // Non-commutative operators already guarantee distinct values (|a−b|≥1, max/min≥2).
-            CageSupport::NonCommutative(_, _, memo) => narrow_fills(memo, &old_fills, k)?,
+            CageSupport::NonCommutative(_, _, memo) => {
+                narrow_fills(memo, &old_fills, k, state.size())?
+            }
         };
         Ok(state.apply_fills(&cells, &old_fills, new_fills))
     }
@@ -529,6 +544,61 @@ mod tests {
         assert!(new_g.get(Cell(1, 1)).unwrap().is_empty());
         assert!(new_g.get(Cell(1, 2)).unwrap().is_empty());
         assert_eq!(changed.len(), 2);
+    }
+
+    // ---- narrow_fills all-full short-circuit ----
+
+    /// A memo wrapper whose `narrow` panics, proving the short-circuit path
+    /// never reaches it.
+    struct NoNarrow<M: Memo>(M);
+
+    impl<M: Memo> Memo for NoNarrow<M> {
+        fn get(&self, index: usize) -> Result<Fill, Error> {
+            self.0.get(index)
+        }
+        fn narrow(&self, _support: &[Fill]) -> Result<Self, Error> {
+            panic!("narrow must not be called when every input fill is full")
+        }
+    }
+
+    #[test]
+    fn narrow_fills_all_full_skips_narrow_and_returns_base_fills() {
+        // Add 3 in a 4×4: base fills are {1,2} for both cells.
+        let poly = domino(1, 1, 1, 2);
+        let mdd = Mdd::new(4, 2, Add, 3, &collinear_groups(&poly)).unwrap();
+        let full = vec![Fill::all(4); 2];
+        let fills = narrow_fills(&NoNarrow(mdd), &full, 2, 4).unwrap();
+        assert_eq!(fills, vec![Fill::from(&[1, 2]); 2]);
+    }
+
+    #[test]
+    fn narrow_fills_all_full_matches_narrow_path() {
+        let poly = triomino(1, 1, 1, 2, 2, 1);
+        let mdd = Mdd::new(4, 3, Add, 7, &collinear_groups(&poly)).unwrap();
+        let full = vec![Fill::all(4); 3];
+        let shortcut = narrow_fills(&mdd, &full, 3, 4).unwrap();
+        let narrowed = mdd.narrow(&full).unwrap();
+        let via_narrow: Vec<Fill> = (0..3).map(|i| narrowed.get(i).unwrap()).collect();
+        assert_eq!(shortcut, via_narrow);
+    }
+
+    #[test]
+    fn narrow_fills_partial_input_still_narrows() {
+        // Add 5 in 4×4 with cell A pinned to {4}: only (4,1) survives.
+        let poly = domino(1, 1, 1, 2);
+        let mdd = Mdd::new(4, 2, Add, 5, &collinear_groups(&poly)).unwrap();
+        let fills = narrow_fills(&mdd, &[Fill::from(&[4]), Fill::all(4)], 2, 4).unwrap();
+        assert_eq!(fills, vec![Fill::from(&[4]), Fill::from(&[1])]);
+    }
+
+    #[test]
+    fn cage_propagate_subtract_full_grid_returns_base_fills() {
+        // Subtract 3 in 4×4: valid pairs are (1,4),(4,1) — base fills {1,4}.
+        // Exercises the short-circuit through the non-commutative (Table) arm.
+        let cage = Cage::non_commutative(4, domino(1, 1, 1, 2), Subtract, 3).unwrap();
+        let (new_g, _) = cage.propagate(&full_grid(4)).unwrap();
+        assert_eq!(new_g.get(Cell(1, 1)).unwrap(), Fill::from(&[1, 4]));
+        assert_eq!(new_g.get(Cell(1, 2)).unwrap(), Fill::from(&[1, 4]));
     }
 
     // ---- given ----
