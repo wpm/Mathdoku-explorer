@@ -24,6 +24,10 @@ mod cli;
 #[cfg_attr(not(test), allow(dead_code))]
 mod config;
 mod error;
+// Exported (`pub`) because the perf runner (ADR-0007 §Statistics) is the
+// consumer and lands in the next PR; exporting keeps the not-yet-consumed
+// API live for dead-code analysis without a blanket `#[allow(dead_code)]`.
+pub mod stats;
 
 use std::io::Write as _;
 use std::process::ExitCode;
