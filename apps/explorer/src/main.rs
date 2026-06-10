@@ -19,6 +19,10 @@
 
 mod app;
 mod cli;
+// Not yet reachable from any subcommand: the runner PR (ADR-0007) wires the
+// configuration into the `perf` flow. Unit tests exercise it in the meantime.
+#[cfg_attr(not(test), allow(dead_code))]
+mod config;
 mod error;
 
 use std::io::Write as _;
