@@ -77,7 +77,10 @@ Expect the search phase to be heavily right-tailed as `n` grows: at
 `n = 7` the occasional generated instance takes minutes to solve where the
 median is around 100 ms. The example configuration stops at `n = 6` for
 exactly this reason; the protocol handles the tail statistically (median
-alongside mean), but you still have to wait for it.
+alongside mean), but you still have to wait for it. Sizes 8 and 9 are
+accepted by the experiment and sit even further out on that curve — a
+single trial can take far longer still, with progress reported only per
+condition, so silence does not mean a hang.
 
 One caveat to keep in mind when reading results: the instances are drawn
 from the **generator's** population. Conclusions are about average-case
@@ -109,7 +112,7 @@ Each run creates `<output_directory>/<experiment>-<UTC timestamp>/`:
 | `config.yaml` | The resolved configuration, including the actually-used master seed — everything needed to reproduce the workload. |
 | `metadata.yaml` | Environment provenance: package version, git commit, rustc version, profile, target, OS, start time. |
 | `raw.csv` | One row per measured trial: `experiment`, `condition`, `trial` (index), `seed` (the trial's derived RNG seed), and one `<phase>_ns` column per phase in integer nanoseconds. |
-| `summary.csv` | One row per condition × phase: `count`, `mean_ns`, `std_dev_ns`, `min_ns`, `p25_ns`, `median_ns`, `p75_ns`, `max_ns`, `ci95_low_ns`, `ci95_high_ns`. |
+| `summary.csv` | One row per condition × phase, keyed by leading `condition` and `phase` columns: `count`, `mean_ns`, `std_dev_ns`, `min_ns`, `p25_ns`, `median_ns`, `p75_ns`, `max_ns`, `ci95_low_ns`, `ci95_high_ns`. |
 
 `raw.csv` keeps every measurement so later analyses (plots, regressions)
 never need a re-run.

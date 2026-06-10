@@ -10,4 +10,5 @@ parameters:              # experiment-specific; solve-time wants the grid sizes 
   # Search times are heavily right-tailed as n grows: at n = 7 the occasional
   # generated instance takes minutes to solve where the median is ~100 ms, so
   # 7 is left out of the ready-to-run example. Add it when you can wait.
+  # 8 and 9 are also accepted, and take far longer still.
   n: [3, 4, 5, 6]

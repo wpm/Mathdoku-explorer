@@ -6,3 +6,6 @@ test-results/
 dist/
 dist-web/
 docs/
+
+# Explorer experiment output (apps/explorer README example writes here)
+results/
