@@ -58,6 +58,29 @@ pub enum Error {
         phase: &'static str,
     },
 
+    /// An experiment rejected the `parameters` block of its configuration.
+    #[error("invalid parameters for experiment `{experiment}`: {reason}")]
+    InvalidParameters {
+        /// The experiment that rejected its parameters.
+        experiment: String,
+        /// Why the parameters are unacceptable.
+        reason: String,
+    },
+
+    /// A trial failed inside the library under measurement, either with a
+    /// library error or by violating an invariant the experiment relies on
+    /// (for example, a generated puzzle must be feasible and solvable).
+    #[error("experiment `{experiment}` trial failed (n={n}): {reason}")]
+    Trial {
+        /// The experiment whose trial failed.
+        experiment: String,
+        /// The grid size of the failing trial's condition (0 when the
+        /// failure precedes resolving the condition's grid size).
+        n: usize,
+        /// What went wrong.
+        reason: String,
+    },
+
     /// An experiment returned measurements whose phases do not match the
     /// phases it declared up front.
     #[error(

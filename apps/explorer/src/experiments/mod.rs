@@ -18,6 +18,8 @@
 //! [`registry`], and document the experiment in the README. The test bed's
 //! YAML schema and runner are untouched.
 
+pub mod solve_time;
+
 use std::time::Duration;
 
 use rand_chacha::ChaCha8Rng;
@@ -35,13 +37,6 @@ pub struct Condition {
 
 impl Condition {
     /// Creates a condition with the given label.
-    // Real experiments build their condition lists through this; until the
-    // first one registers (`solve-time`, next PR) only test code calls it,
-    // so the non-test binary sees it as dead.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "used by experiments; first lands next PR")
-    )]
     pub fn new(label: impl Into<String>) -> Self {
         Self {
             label: label.into(),
@@ -108,11 +103,10 @@ pub trait PreparedExperiment {
 
 /// Every registered experiment, in listing order.
 ///
-/// Registration is one `Box::new(...)` line per experiment. The first real
-/// experiment, `solve-time` (ADR-0007), lands in the next PR.
+/// Registration is one `Box::new(...)` line per experiment.
 #[must_use]
 pub fn registry() -> Vec<Box<dyn Experiment>> {
-    Vec::new()
+    vec![Box::new(solve_time::SolveTime)]
 }
 
 /// A deterministic fake experiment for exercising the runner and output
@@ -239,9 +233,12 @@ mod tests {
     use super::{Condition, Experiment as _, registry};
 
     #[test]
-    fn registry_is_empty_until_the_first_experiment_lands() {
-        // `solve-time` (ADR-0007) registers in the next PR.
-        assert!(registry().is_empty());
+    fn registry_contains_solve_time() {
+        let names: Vec<&str> = registry()
+            .iter()
+            .map(|experiment| experiment.name())
+            .collect();
+        assert_eq!(names, vec!["solve-time"]);
     }
 
     #[test]

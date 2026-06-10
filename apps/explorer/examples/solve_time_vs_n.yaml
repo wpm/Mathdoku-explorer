@@ -1,0 +1,14 @@
+# Solving performance of the shipping mathdoku code as a function of grid size n.
+# Run with:
+#   cargo run --release -p mathdoku-explorer -- perf apps/explorer/examples/solve_time_vs_n.yaml
+experiment: solve-time   # which registered experiment to run (see `-- list`)
+seed: 20260609           # master seed; omit to draw one randomly (it is recorded either way)
+warmup: 3                # discarded trials per condition, absorbing cache/allocator transients
+samples: 50              # measured trials per condition (>= 2 so a standard deviation exists)
+output_directory: results # run directories are created under this directory
+parameters:              # experiment-specific; solve-time wants the grid sizes to measure
+  # Search times are heavily right-tailed as n grows: at n = 7 the occasional
+  # generated instance takes minutes to solve where the median is ~100 ms, so
+  # 7 is left out of the ready-to-run example. Add it when you can wait.
+  # 8 and 9 are also accepted, and take far longer still.
+  n: [3, 4, 5, 6]
