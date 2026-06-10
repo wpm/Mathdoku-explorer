@@ -62,6 +62,9 @@ jobs:
       - name: cargo test (mathdoku)
         run: cargo test --lib -p mathdoku
 
+      - name: cargo test (mathdoku-explorer)
+        run: cargo test -p mathdoku-explorer
+
       - name: cargo test (mathdoku-designer)
         run: cd apps/designer && cargo test
 
