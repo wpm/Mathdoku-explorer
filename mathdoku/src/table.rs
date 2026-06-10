@@ -63,7 +63,6 @@ impl Table {
         )
     }
 
-    #[allow(dead_code)] // used only in tests to inspect Table contents
     pub(crate) fn tuples(&self) -> &[Vec<N>] {
         &self.tuples
     }

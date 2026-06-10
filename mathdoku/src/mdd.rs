@@ -360,6 +360,84 @@ impl Mdd {
             }
         }
     }
+
+    /// Returns the number of accepting tuples (root→terminal paths) in this MDD.
+    ///
+    /// Computed by a memoized subtree-count fold over the shared DAG, so the
+    /// cost is proportional to the number of states and edges, never to the
+    /// number of paths.
+    pub(crate) fn tuple_count(&self) -> u64 {
+        let root = Node {
+            depth: 0,
+            state: self.dp.root(),
+        };
+        let mut counts = HashMap::new();
+        self.count_paths(&root, &mut counts)
+    }
+
+    fn count_paths(&self, head: &Node, counts: &mut HashMap<Node, u64>) -> u64 {
+        if let Some(&count) = counts.get(head) {
+            return count;
+        }
+        let count = self.edges.get(head).map_or_else(
+            || u64::from(self.dp.accept(head.depth, &head.state)),
+            |edges| {
+                edges
+                    .iter()
+                    .map(|(_, tail)| self.count_paths(tail, counts))
+                    .sum()
+            },
+        );
+        let _ = counts.insert(head.clone(), count);
+        count
+    }
+
+    /// Returns the number of distinct value multisets among accepting tuples.
+    ///
+    /// Folds bottom-up over the DAG, layer by layer: every edge runs from
+    /// depth `d` to `d + 1`, so each node's set of suffix multisets (sorted
+    /// label vectors on paths from that node to a terminal) is assembled from
+    /// already-computed successors. The work is bounded by the diagram size
+    /// times the number of distinct multisets, never the number of paths.
+    pub(crate) fn multiset_count(&self) -> u64 {
+        let root = Node {
+            depth: 0,
+            state: self.dp.root(),
+        };
+        if !self.edges.contains_key(&root) {
+            return u64::from(self.dp.accept(root.depth, &root.state));
+        }
+        let mut suffixes: HashMap<Node, HashSet<Vec<N>>> = HashMap::new();
+        let depths: HashSet<T> = self.edges.keys().map(|n| n.depth).collect();
+        let mut depths: Vec<T> = depths.into_iter().collect();
+        depths.sort_unstable_by(|a, b| b.cmp(a));
+        for depth in depths {
+            for head in self.heads_at_depth(depth) {
+                let mut head_suffixes: HashSet<Vec<N>> = HashSet::new();
+                for (label, tail) in &self.edges[&head] {
+                    match suffixes.get(tail) {
+                        // A tail without outgoing edges is a terminal: the MDD
+                        // is reduced, so it is always accepting, but check anyway.
+                        None => {
+                            if self.dp.accept(tail.depth, &tail.state) {
+                                let _ = head_suffixes.insert(vec![*label]);
+                            }
+                        }
+                        Some(tail_suffixes) => {
+                            for multiset in tail_suffixes {
+                                let mut with_label = multiset.clone();
+                                let at = with_label.partition_point(|&v| v < *label);
+                                with_label.insert(at, *label);
+                                let _ = head_suffixes.insert(with_label);
+                            }
+                        }
+                    }
+                }
+                let _ = suffixes.insert(head, head_suffixes);
+            }
+        }
+        u64::try_from(suffixes[&root].len()).unwrap_or(u64::MAX)
+    }
 }
 
 impl std::fmt::Display for Mdd {
@@ -1191,6 +1269,95 @@ mod tests {
         assert_eq!(solutions.by_ref().count(), 4); // (1,4),(2,3),(3,2),(4,1)
         assert_eq!(solutions.next(), None);
         assert_eq!(solutions.next(), None);
+    }
+
+    // ---- tuple_count / multiset_count ----
+
+    #[test]
+    fn counts_match_tuples_oracle_across_cage_shapes() {
+        setup();
+        let cases: Vec<CageCase> = vec![
+            (4, 2, Add, 5, no_lines()),                    // free domino
+            (4, 2, Add, 4, vec![vec![0, 1]]),              // collinear domino
+            (4, 3, Add, 6, vec![vec![0, 1], vec![0, 2]]),  // L-cage
+            (6, 3, Multiply, 24, vec![vec![0, 1, 2]]),     // 3-in-a-row
+            (5, 4, Add, 12, vec![vec![0, 1], vec![2, 3]]), // S-tetromino
+            (9, 4, Add, 20, vec![vec![0, 1, 2, 3]]),       // 4-in-a-row, 9×9
+        ];
+        for (n, k, op, target, lines) in cases {
+            let m = Mdd::new(n, k, op, target, &lines).unwrap();
+            assert_counts_match_tuples(&m, &format!("n={n} k={k} op={op:?} target={target}"));
+        }
+    }
+
+    #[test]
+    fn counts_match_tuples_across_n_k_target() {
+        setup();
+        for n in 2u8..=6 {
+            for k in 2u8..=4 {
+                let max_sum = T::from(n) * T::from(k);
+                for target in 1..=max_sum {
+                    if let Ok(m) = Mdd::new(n, k, Add, target, &no_lines()) {
+                        assert_counts_match_tuples(&m, &format!("n={n} k={k} Add {target}"));
+                    }
+                }
+                let max_product = T::from(n).pow(u32::from(k));
+                for target in 1..=max_product {
+                    if let Ok(m) = Mdd::new(n, k, Multiply, target, &no_lines()) {
+                        assert_counts_match_tuples(&m, &format!("n={n} k={k} Multiply {target}"));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn counts_match_tuples_after_narrow() {
+        setup();
+        // The +6 L-cage, narrowed position by position to each singleton.
+        let lines = vec![vec![0, 1], vec![0, 2]];
+        let m = Mdd::new(4, 3, Add, 6, &lines).unwrap();
+        for position in 0..3 {
+            for v in 1..=4 {
+                let mut support = full_support(4, 3);
+                support[position] = Fill::singleton(v);
+                if let Ok(narrowed) = m.narrow(&support) {
+                    assert_counts_match_tuples(&narrowed, &format!("position={position} v={v}"));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn l_cage_counts_are_two_multisets_seven_tuples() {
+        setup();
+        // The +6 L-cage in 4×4: six orderings of {1,2,3} plus (4,1,1).
+        let lines = vec![vec![0, 1], vec![0, 2]];
+        let m = Mdd::new(4, 3, Add, 6, &lines).unwrap();
+        assert_eq!(m.tuple_count(), 7);
+        assert_eq!(m.multiset_count(), 2);
+    }
+
+    fn assert_counts_match_tuples(m: &Mdd, context: &str) {
+        let tuples = m.tuples();
+        let multisets: HashSet<Vec<N>> = tuples
+            .iter()
+            .map(|t| {
+                let mut s = t.clone();
+                s.sort_unstable();
+                s
+            })
+            .collect();
+        assert_eq!(
+            m.tuple_count(),
+            u64::try_from(tuples.len()).unwrap(),
+            "tuple count vs oracle: {context}"
+        );
+        assert_eq!(
+            m.multiset_count(),
+            u64::try_from(multisets.len()).unwrap(),
+            "multiset count vs oracle: {context}"
+        );
     }
 
     // ---- brute-force oracle cross-check ----

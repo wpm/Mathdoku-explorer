@@ -285,6 +285,49 @@ impl Cage {
     pub fn cells(&self) -> Vec<Cell> {
         self.polyomino.cells()
     }
+
+    /// Returns the `(multiset, tuple)` counts of value assignments viable for
+    /// this cage given the per-cell candidate `fills` (in polyomino order).
+    ///
+    /// The counts come from the cage's memo — the exact tuple relation —
+    /// narrowed by `fills`, so they respect the arithmetic constraint,
+    /// collinear distinctness, and the supplied fills jointly. For commutative
+    /// cages the counts are folded over the narrowed `Mdd` in time
+    /// proportional to the diagram, never by enumerating `n^k` combinations.
+    ///
+    /// # Errors
+    /// Returns an error if the memo fails to narrow for a reason other than
+    /// having no surviving tuples, which is reported as `(0, 0)`.
+    pub fn viable_counts(&self, fills: &[Fill]) -> Result<(u64, u64), Error> {
+        match &self.support {
+            CageSupport::Given(value) => {
+                let viable = fills.first().is_some_and(|fill| fill.contains(*value));
+                Ok(if viable { (1, 1) } else { (0, 0) })
+            }
+            CageSupport::Commutative(_, _, memo) => match memo.narrow(fills) {
+                Ok(narrowed) => Ok((narrowed.multiset_count(), narrowed.tuple_count())),
+                Err(EmptyFills) => Ok((0, 0)),
+                Err(e) => Err(e),
+            },
+            CageSupport::NonCommutative(_, _, memo) => match memo.narrow(fills) {
+                Ok(narrowed) => {
+                    let tuples = narrowed.tuples();
+                    let multisets: std::collections::HashSet<Vec<N>> = tuples
+                        .iter()
+                        .map(|tuple| {
+                            let mut sorted = tuple.clone();
+                            sorted.sort_unstable();
+                            sorted
+                        })
+                        .collect();
+                    let count = |len: usize| u64::try_from(len).unwrap_or(u64::MAX);
+                    Ok((count(multisets.len()), count(tuples.len())))
+                }
+                Err(EmptyFills) => Ok((0, 0)),
+                Err(e) => Err(e),
+            },
+        }
+    }
 }
 
 impl Display for Cage {

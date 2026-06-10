@@ -33,7 +33,7 @@ pub fn CageStats() -> impl IntoView {
     }
 }
 
-fn pluralize(n: usize, singular: &str, plural: &str) -> String {
+fn pluralize(n: u64, singular: &str, plural: &str) -> String {
     if n == 1 {
         format!("1 {singular}")
     } else {

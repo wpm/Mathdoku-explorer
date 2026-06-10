@@ -106,59 +106,30 @@ impl Puzzle {
         crate::solutions::Solutions::new(self)
     }
 
-    /// Returns all valid ordered value assignments for the cage covering `polyomino`.
+    /// Returns the `(multiset, tuple)` counts of valid value assignments for
+    /// the cage covering `polyomino`, given the current grid fills.
     ///
-    /// Each tuple assigns one value from `1..=n` to each cell in the cage in
-    /// sorted cell order, filtered to assignments consistent with current fills
-    /// and the all-different constraint within the cage.
+    /// A tuple assigns one value from `1..=n` to each cell in the cage in
+    /// sorted cell order; it is counted when it jointly satisfies the cage's
+    /// arithmetic constraint, collinear distinctness within the cage, and
+    /// every cell's current candidate fill. A multiset is a tuple up to
+    /// reordering. Counts are folded over the cage's memo (the exact tuple
+    /// relation), so the cost is proportional to the memo, not `n^k`.
     ///
     /// # Errors
     /// Returns [`Error::MissingPolyomino`] if no cage covers `polyomino`.
-    pub fn cage_tuples(&self, polyomino: &Polyomino) -> Result<Vec<Vec<N>>, Error> {
+    pub fn cage_viable_counts(&self, polyomino: &Polyomino) -> Result<(u64, u64), Error> {
         let cage_arc = polyomino
             .iter()
             .find_map(|cell| self.cages.get(cell))
             .filter(|arc| &arc.polyomino == polyomino)
             .ok_or_else(|| Error::MissingPolyomino(polyomino.clone()))?;
-        let cells: Vec<Cell> = cage_arc.polyomino.iter().copied().collect();
-        let n_val =
-            N::try_from(self.grid.size()).map_err(|_| Error::InvalidGridSize(self.grid.size()))?;
-        let k = cells.len();
-
-        // Enumerate all n^k value combinations.
-        let mut result = Vec::new();
-        let mut tuple: Vec<N> = vec![1; k];
-        loop {
-            // Check: each value is in the cell's current fill.
-            let fits = tuple
-                .iter()
-                .zip(&cells)
-                .all(|(&v, &cell)| self.grid.get(cell).is_ok_and(|f| f.contains(v)));
-            // Check: cells sharing a row or column have distinct values.
-            let unique = (0..k).all(|i| {
-                (0..i).all(|j| {
-                    let Cell(ri, ci) = cells[i];
-                    let Cell(rj, cj) = cells[j];
-                    (ri != rj && ci != cj) || tuple[i] != tuple[j]
-                })
-            });
-            if fits && unique {
-                result.push(tuple.clone());
-            }
-            // Increment tuple (little-endian, values 1..=n).
-            let mut pos = k - 1;
-            loop {
-                tuple[pos] += 1;
-                if tuple[pos] <= n_val {
-                    break;
-                }
-                tuple[pos] = 1;
-                if pos == 0 {
-                    return Ok(result);
-                }
-                pos -= 1;
-            }
-        }
+        let fills: Vec<Fill> = cage_arc
+            .polyomino
+            .iter()
+            .map(|&cell| self.grid.get(cell))
+            .collect::<Result<_, _>>()?;
+        cage_arc.viable_counts(&fills)
     }
 
     /// Returns the cage whose polyomino exactly matches `polyomino`, or `None`.
@@ -677,6 +648,84 @@ mod tests {
             !arm2.contains(4),
             "arm (2,1) cannot be 4: forces two collinear 1s at (1,1) and (1,2); got {arm2}"
         );
+    }
+
+    // ---- cage_viable_counts ----
+
+    #[test]
+    fn cage_viable_counts_add_domino_respects_arithmetic() {
+        // Regression for the brute-force enumeration that ignored the cage's
+        // arithmetic: Add(5) in a 4×4 has exactly 4 tuples — (1,4),(2,3),
+        // (3,2),(4,1) — and 2 multisets, not the 12 distinct pairs the fills
+        // alone admit.
+        let p = Puzzle::new(4).unwrap();
+        let poly = domino(1, 1, 1, 2);
+        let p = p.insert(&poly, CageOperator::Add, 5).unwrap().unwrap();
+        assert_eq!(p.cage_viable_counts(&poly).unwrap(), (2, 4));
+    }
+
+    #[test]
+    fn cage_viable_counts_l_cage_matches_mdd() {
+        // The +6 L-cage in 4×4: six orderings of {1,2,3} plus (4,1,1) at the
+        // corner — 7 tuples, 2 multisets (matches Mdd::tuples()).
+        let p = Puzzle::new(4).unwrap();
+        let poly = Polyomino::from([Cell(1, 1), Cell(1, 2), Cell(2, 1)]).unwrap();
+        let p = p.insert(&poly, CageOperator::Add, 6).unwrap().unwrap();
+        assert_eq!(p.cage_viable_counts(&poly).unwrap(), (2, 7));
+    }
+
+    #[test]
+    fn cage_viable_counts_narrows_with_pinned_cell() {
+        // Pin (1,1)=4 in an Add(5) domino: only (4,1) survives.
+        let p = Puzzle::new(4).unwrap();
+        let poly = domino(1, 1, 1, 2);
+        let p = p.insert(&poly, CageOperator::Add, 5).unwrap().unwrap();
+        let p = p.set(Cell(1, 1), 4).unwrap();
+        assert_eq!(p.cage_viable_counts(&poly).unwrap(), (1, 1));
+    }
+
+    #[test]
+    fn cage_viable_counts_subtract_counts_table_pairs() {
+        // Subtract 1 in 4×4: (1,2),(2,1),(2,3),(3,2),(3,4),(4,3) — 6 tuples,
+        // 3 multisets.
+        let p = Puzzle::new(4).unwrap();
+        let poly = domino(1, 1, 1, 2);
+        let p = p.insert(&poly, CageOperator::Subtract, 1).unwrap().unwrap();
+        assert_eq!(p.cage_viable_counts(&poly).unwrap(), (3, 6));
+    }
+
+    #[test]
+    fn cage_viable_counts_given_is_single_tuple() {
+        let p = Puzzle::new(4).unwrap();
+        let poly = Polyomino::from([Cell(1, 1)]).unwrap();
+        let p = p.insert(&poly, CageOperator::Given, 3).unwrap().unwrap();
+        assert_eq!(p.cage_viable_counts(&poly).unwrap(), (1, 1));
+    }
+
+    #[test]
+    fn cage_viable_counts_missing_cage_returns_error() {
+        let p = Puzzle::new(4).unwrap();
+        assert!(matches!(
+            p.cage_viable_counts(&domino(1, 1, 1, 2)),
+            Err(Error::MissingPolyomino(_))
+        ));
+    }
+
+    /// Perf regression: an 8-cell (2×4) Add cage in a 9×9. The deleted brute
+    /// force enumerated `9^8 ≈ 4×10^7` value combinations here (and `9^12`
+    /// for a 3×4 cage — it never finished); the memo fold is proportional to
+    /// the diagram.
+    #[test]
+    fn perf_cage_viable_counts_fat_cage_in_9x9() {
+        let cells: Vec<Cell> = (1..=2)
+            .flat_map(|r| (1..=4).map(move |c| Cell(r, c)))
+            .collect();
+        let poly = Polyomino::from(cells).unwrap();
+        let p = Puzzle::new(9).unwrap();
+        let p = p.insert(&poly, CageOperator::Add, 40).unwrap().unwrap();
+        let (multisets, tuples) = p.cage_viable_counts(&poly).unwrap();
+        assert!(multisets >= 1);
+        assert!(tuples >= multisets);
     }
 
     #[test]

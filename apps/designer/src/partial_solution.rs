@@ -64,21 +64,14 @@ impl PartialSolution {
     ///
     /// Counts are computed by propagating all cage constraints forward from an
     /// unconstrained grid, so they reflect every cage currently on the puzzle.
+    /// They are folded over the cage's memo (the exact tuple relation narrowed
+    /// by the current fills), so they respect the cage's arithmetic constraint
+    /// and cost time proportional to the memo rather than `n^k`.
     #[must_use]
-    pub fn viable_counts(&self, cage_idx: usize) -> Option<(usize, usize)> {
+    pub fn viable_counts(&self, cage_idx: usize) -> Option<(u64, u64)> {
         let puzzle = self.lock_puzzle();
         let cage = puzzle.cages().nth(cage_idx)?;
-        let tuples = puzzle.cage_tuples(&cage.polyomino).ok()?;
-        drop(puzzle);
-        let multisets: HashSet<Vec<mathdoku::N>> = tuples
-            .iter()
-            .map(|t| {
-                let mut s = t.clone();
-                s.sort_unstable();
-                s
-            })
-            .collect();
-        Some((multisets.len(), tuples.len()))
+        puzzle.cage_viable_counts(&cage.polyomino).ok()
     }
 
     /// Returns the cage index for the cell at `(r, c)`, or `None` if uncovered.
@@ -192,6 +185,21 @@ mod tests {
         // The only multiset summing to 6 with distinct values in 1..=3 is {1,2,3},
         // which has 3! = 6 ordered arrangements.
         assert_eq!(ps.viable_counts(0), Some((1, 6)));
+    }
+
+    #[test]
+    fn viable_counts_respects_cage_arithmetic() {
+        // Regression for issue #108: the old brute force ignored the cage's
+        // arithmetic and reported every fill-consistent distinct pair — 12 for
+        // an Add(5) domino in a 4×4. The correct counts are 4 tuples
+        // ((1,4),(2,3),(3,2),(4,1)) and 2 multisets ({1,4},{2,3}).
+        let puzzle = Puzzle::new(4)
+            .unwrap()
+            .insert_cage(&cage_at(4, &[(0, 0), (0, 1)], Operator::Add, 5))
+            .unwrap()
+            .unwrap();
+        let ps = PartialSolution::new(puzzle, Puzzle::new(4).unwrap());
+        assert_eq!(ps.viable_counts(0), Some((2, 4)));
     }
 
     #[test]
