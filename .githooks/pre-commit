@@ -32,6 +32,10 @@ RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p mathdoku 2>&1
 echo "==> cargo test"
 cargo test --lib -p mathdoku 2>&1
 
+echo "==> mathdoku-explorer checks"
+cargo clippy -p mathdoku-explorer --all-targets -- -D warnings 2>&1
+cargo test -p mathdoku-explorer 2>&1
+
 echo "==> mathdoku-designer checks"
 (cd apps/designer && \
   cargo clippy --all-targets 2>&1 && \

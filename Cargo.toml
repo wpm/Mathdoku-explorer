@@ -5,6 +5,7 @@ members = [
     "apps/designer",
     "apps/designer/core",
     "apps/designer/src-tauri",
+    "apps/explorer",
 ]
 
 [workspace.package]

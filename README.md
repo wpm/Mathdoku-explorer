@@ -17,6 +17,7 @@ A Rust workspace for generating, solving, and designing Mathdoku puzzles.
 | `apps/designer/` | `mathdoku-designer-ui` | Leptos/WASM UI for the desktop designer. |
 | `apps/designer/core/` | `mathdoku-designer-core` | Platform-independent designer logic. |
 | `apps/designer/src-tauri/` | `mathdoku-designer-tauri` | Tauri desktop shell. |
+| `apps/explorer/` | `mathdoku-explorer` | Explorer CLI: scientific performance experiments over the library. |
 | `adr/` | — | Architecture Decision Records. |
 
 Only `mathdoku` is intended for publication to crates.io. The designer crates
