@@ -9,6 +9,9 @@ publish = false
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
+csv = "1"
+rand = "0.10"
+rand_chacha = "0.10"
 serde = { version = "1", features = ["derive"] }
 serde_yaml_ng = "0.10"
 thiserror = "2"
