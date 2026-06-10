@@ -2,7 +2,9 @@
 //!
 //! Theory: a run's output directory is its complete provenance record.
 //! `config.yaml` holds the *resolved* configuration — with the
-//! actually-used master seed — so the run can be reproduced bit-for-bit;
+//! actually-used master seed — so the run's workload (conditions, trial
+//! indices, derived seeds, generated instances) can be reproduced exactly;
+//! a re-run is identical apart from the measured duration columns;
 //! `metadata.yaml` pins the environment (versions, commit, profile,
 //! platform) that makes timings comparable or not; `raw.csv` keeps every
 //! measured trial so future analyses never need a re-run; `summary.csv`
@@ -145,7 +147,10 @@ fn create_run_directory(
 
 /// Writes the resolved configuration (seed filled in) as `config.yaml`.
 fn write_config(run_directory: &Path, config: &ExperimentConfig) -> Result<(), Error> {
-    let yaml = serde_yaml_ng::to_string(config)?;
+    let yaml = serde_yaml_ng::to_string(config).map_err(|source| Error::OutputSerialize {
+        file: "config.yaml",
+        source,
+    })?;
     write_text(&run_directory.join("config.yaml"), &yaml)
 }
 
@@ -193,7 +198,10 @@ fn write_metadata(run_directory: &Path, timestamp: &str) -> Result<(), Error> {
         os: std::env::consts::OS,
         start_time: timestamp.to_owned(),
     };
-    let yaml = serde_yaml_ng::to_string(&metadata)?;
+    let yaml = serde_yaml_ng::to_string(&metadata).map_err(|source| Error::OutputSerialize {
+        file: "metadata.yaml",
+        source,
+    })?;
     write_text(&run_directory.join("metadata.yaml"), &yaml)
 }
 
@@ -439,6 +447,8 @@ mod tests {
         assert_eq!(format_utc_timestamp(1_234_567_890), "20090213T233130Z");
         assert_eq!(format_utc_timestamp(2_147_483_647), "20380119T031407Z");
         assert_eq!(format_utc_timestamp(4_102_444_800), "21000101T000000Z");
+        assert_eq!(format_utc_timestamp(4_107_456_000), "21000228T000000Z");
+        assert_eq!(format_utc_timestamp(4_107_542_400), "21000301T000000Z");
         assert_eq!(format_utc_timestamp(1_767_225_600), "20260101T000000Z");
     }
 

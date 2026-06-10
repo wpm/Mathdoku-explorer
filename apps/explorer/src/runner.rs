@@ -6,12 +6,17 @@
 //! trials. Trial randomness is fully determined by the configuration: a
 //! master seed plus the condition and trial indices derive a per-trial
 //! [`ChaCha8Rng`] through [`derive_seed`], so any single trial can be
-//! re-run in isolation and a whole run is bit-for-bit reproducible. The
-//! trial index space is *unified*: warmup occupies indices `0..warmup` and
+//! re-run in isolation and a whole run's *workload* — conditions, trial
+//! indices, derived seeds, generated instances — reproduces exactly. A
+//! re-run is identical apart from the measured duration columns: the
+//! identity columns and the instance population reproduce, the wall-clock
+//! timings do not.
+//!
+//! The trial index space is *unified*: warmup occupies indices `0..warmup` and
 //! measurement `warmup..warmup + samples`, so a trial's seed is a pure
 //! function of `(master, condition, trial)` and never of whether the trial
 //! happened to be warmup — re-running trial 7 of condition 2 in a debugger
-//! reproduces exactly what the run measured. (Changing `warmup` in the
+//! replays exactly the workload the run measured. (Changing `warmup` in the
 //! configuration shifts which indices are measured; that is a different
 //! experiment, deliberately.)
 //!
@@ -179,6 +184,7 @@ pub fn run_prepared(
     protocol: Protocol,
     stderr: &mut impl Write,
 ) -> Result<RunData, Error> {
+    validate_declared_phases(experiment_name, declared_phases)?;
     let conditions = prepared.conditions().to_vec();
     let mut phases: Vec<&'static str> = declared_phases.to_vec();
     let derive_total = declared_phases.len() > 1;
@@ -224,6 +230,30 @@ pub fn run_prepared(
         phases,
         trials,
     })
+}
+
+/// Checks that the experiment's declared phases are usable by the
+/// protocol: none may repeat, and none may claim the runner's reserved
+/// derived [`TOTAL_PHASE`] name.
+fn validate_declared_phases(
+    experiment_name: &str,
+    declared_phases: &'static [&'static str],
+) -> Result<(), Error> {
+    for (position, &phase) in declared_phases.iter().enumerate() {
+        if phase == TOTAL_PHASE {
+            return Err(Error::ReservedPhase {
+                experiment: experiment_name.to_owned(),
+                phase: TOTAL_PHASE,
+            });
+        }
+        if declared_phases[..position].contains(&phase) {
+            return Err(Error::DuplicatePhase {
+                experiment: experiment_name.to_owned(),
+                phase,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Checks that `measurements` reports exactly the declared phases, in
@@ -405,6 +435,9 @@ mod tests {
         }
     }
 
+    // Bit-identical reruns hold for the *fake* because its durations are
+    // RNG-derived; a real experiment's rerun reproduces only the identity
+    // columns and the instance population, never the timings.
     #[test]
     fn reruns_with_the_same_master_seed_are_bit_identical() {
         let protocol = Protocol {
@@ -484,6 +517,54 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_declared_phase_named_total_is_rejected() {
+        let fake = FakeExperiment::new(&["alpha", "total"], 1);
+        let mut stderr = Vec::new();
+        let result = run_prepared(
+            fake.name(),
+            prepare(&fake).as_ref(),
+            &["alpha", "total"],
+            Protocol {
+                master_seed: 1,
+                warmup: 0,
+                samples: 1,
+            },
+            &mut stderr,
+        );
+        match result {
+            Err(Error::ReservedPhase { experiment, phase }) => {
+                assert_eq!(experiment, "fake");
+                assert_eq!(phase, "total");
+            }
+            other => panic!("expected ReservedPhase, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn duplicate_declared_phases_are_rejected() {
+        let fake = FakeExperiment::new(&["alpha", "beta", "alpha"], 1);
+        let mut stderr = Vec::new();
+        let result = run_prepared(
+            fake.name(),
+            prepare(&fake).as_ref(),
+            &["alpha", "beta", "alpha"],
+            Protocol {
+                master_seed: 1,
+                warmup: 0,
+                samples: 1,
+            },
+            &mut stderr,
+        );
+        match result {
+            Err(Error::DuplicatePhase { experiment, phase }) => {
+                assert_eq!(experiment, "fake");
+                assert_eq!(phase, "alpha");
+            }
+            other => panic!("expected DuplicatePhase, got {other:?}"),
+        }
+    }
+
     /// A registry containing one well-behaved two-phase fake.
     fn fake_registry() -> Vec<Box<dyn crate::experiments::Experiment>> {
         vec![Box::new(FakeExperiment::new(&["alpha", "beta"], 2))]
@@ -544,6 +625,9 @@ mod tests {
         );
     }
 
+    // Byte-identical raw.csv on rerun holds for the *fake* because its
+    // durations are RNG-derived; for real experiments only the identity
+    // columns reproduce, not the duration columns.
     #[test]
     fn perf_reruns_with_the_same_seed_write_identical_raw_csv() {
         let directory = unique_temp_dir("runner-rerun");

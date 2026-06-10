@@ -36,6 +36,28 @@ pub enum Error {
     )]
     DebugBuild,
 
+    /// An experiment declared the runner's reserved derived-total phase
+    /// name as one of its own phases.
+    #[error(
+        "experiment `{experiment}` declares the phase name `{phase}`, \
+         which is reserved for the runner's derived per-trial total"
+    )]
+    ReservedPhase {
+        /// The offending experiment.
+        experiment: String,
+        /// The reserved phase name, [`crate::runner::TOTAL_PHASE`].
+        phase: &'static str,
+    },
+
+    /// An experiment declared the same phase name more than once.
+    #[error("experiment `{experiment}` declares the phase `{phase}` more than once")]
+    DuplicatePhase {
+        /// The offending experiment.
+        experiment: String,
+        /// The repeated phase name.
+        phase: &'static str,
+    },
+
     /// An experiment returned measurements whose phases do not match the
     /// phases it declared up front.
     #[error(
@@ -74,6 +96,15 @@ pub enum Error {
         path: PathBuf,
         /// The underlying I/O error.
         source: io::Error,
+    },
+
+    /// A run output file's YAML content could not be serialized.
+    #[error("cannot serialize run output file `{file}`: {source}")]
+    OutputSerialize {
+        /// The run-directory file whose content failed to serialize.
+        file: &'static str,
+        /// The underlying YAML serialization error.
+        source: serde_yaml_ng::Error,
     },
 
     /// A run output file could not be written.

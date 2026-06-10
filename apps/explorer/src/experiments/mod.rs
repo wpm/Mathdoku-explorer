@@ -132,8 +132,11 @@ pub mod fake {
     ///
     /// Trial durations are derived from the trial's RNG, so two runs with
     /// the same master seed produce bit-identical measurements and two runs
-    /// with different seeds do not — exactly the reproducibility contract
-    /// the test bed promises for real experiments.
+    /// with different seeds do not. That is *stronger* than the contract
+    /// the test bed offers for real experiments — there only the workload
+    /// (conditions, trial indices, derived seeds, generated instances)
+    /// reproduces, never the measured wall-clock duration columns — but it
+    /// lets tests assert byte-identical reruns end to end.
     pub struct FakeExperiment {
         declared_phases: &'static [&'static str],
         /// Phases actually reported by `run_trial`; differs from
