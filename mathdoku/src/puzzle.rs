@@ -598,6 +598,15 @@ fn operator_is_feasible(
 /// witness; no diagram is built or narrowed. `lines` is the polyomino's
 /// collinear grouping (see [`collinear_groups`]), hoisted to the caller
 /// because it is the same for every target.
+///
+/// The closing insert-and-fixpoint check is a load-bearing postcondition, not
+/// just a filter: the designer's `feasible_op_targets`
+/// (`apps/designer/src/feasibility.rs`) skips its own re-insert for
+/// non-coverage-completing candidates on the strength of every surviving
+/// `(op, target)` having already passed it here. Weakening or removing it
+/// would silently admit infeasible pairs there; the designer's
+/// `mid_build_results_match_filtering_through_is_globally_feasible` test
+/// guards the equivalence.
 fn target_is_feasible(
     puzzle: &Puzzle,
     polyomino: &Polyomino,

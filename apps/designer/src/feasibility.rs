@@ -49,10 +49,14 @@ pub fn is_globally_feasible(puzzle: &Puzzle, candidate: &Cage) -> bool {
 /// Enumerates all globally-feasible `(operator, target)` pairs for `polyomino`
 /// against the current `puzzle`.
 ///
-/// For each locally-feasible operator and target (from [`Puzzle::possible_operations`]
-/// and [`Puzzle::possible_targets`]), tests global feasibility with
-/// [`is_globally_feasible`]. Only pairs that pass [`is_globally_feasible`] are
-/// returned.
+/// Every pair that survives [`Puzzle::possible_operations`] and
+/// [`Puzzle::possible_targets`] has already passed the insert-and-fixpoint
+/// check inside `target_is_feasible`, which is exactly what
+/// [`is_globally_feasible`] would repeat while the extended puzzle still has
+/// uncovered cells — so on that path the pairs are returned directly. Only a
+/// candidate that completes coverage (its cells are precisely the remaining
+/// uncovered set, a loop-invariant condition) pays for the
+/// [`is_globally_feasible`] solution search.
 ///
 /// # Errors
 /// Returns [`Error`] if constructing a candidate cage fails.
@@ -61,9 +65,16 @@ pub fn feasible_op_targets(
     polyomino: &Polyomino,
 ) -> Result<Vec<(Operator, Target)>, Error> {
     let n = N::try_from(puzzle.n()).map_err(|_| Error::InvalidGridSize(puzzle.n()))?;
+    let covered: usize = puzzle.cages().map(|cage| cage.polyomino.len()).sum();
+    let completes_coverage = covered + polyomino.len() == puzzle.n() * puzzle.n();
     let mut out = Vec::new();
     for op in puzzle.possible_operations(polyomino)? {
-        for target in puzzle.possible_targets(polyomino, op)? {
+        let targets = puzzle.possible_targets(polyomino, op)?;
+        if !completes_coverage {
+            out.extend(targets.into_iter().map(|target| (op, target)));
+            continue;
+        }
+        for target in targets {
             let cage = Cage::new(n, polyomino.clone(), op, target)?;
             if is_globally_feasible(puzzle, &cage) {
                 out.push((op, target));
@@ -258,6 +269,50 @@ mod tests {
                 &Cage::new(N::try_from(puzzle.n()).unwrap(), p.clone(), op, target).unwrap()
             ));
         }
+    }
+
+    #[test]
+    fn mid_build_results_match_filtering_through_is_globally_feasible() {
+        // One committed cage leaves the 4×4 far from covered, so the fast
+        // path (no re-insert) is taken; its output must equal filtering every
+        // locally-feasible pair through `is_globally_feasible`.
+        let puzzle = Puzzle::new(4)
+            .unwrap()
+            .insert_cage(&cage(4, &[(0, 0), (0, 1)], Operator::Add, 3))
+            .unwrap()
+            .unwrap();
+        let p = poly(&[(1, 0), (1, 1)]);
+        let n = N::try_from(puzzle.n()).unwrap();
+        let mut reference = Vec::new();
+        for op in puzzle.possible_operations(&p).unwrap() {
+            for target in puzzle.possible_targets(&p, op).unwrap() {
+                let candidate = Cage::new(n, p.clone(), op, target).unwrap();
+                if is_globally_feasible(&puzzle, &candidate) {
+                    reference.push((op, target));
+                }
+            }
+        }
+        let pairs = feasible_op_targets(&puzzle, &p).unwrap();
+        assert!(!pairs.is_empty());
+        assert_eq!(pairs, reference);
+    }
+
+    #[test]
+    fn coverage_completing_polyomino_keeps_solvable_targets() {
+        // The candidate row is exactly the remaining uncovered set, so the
+        // full solution search runs for each pair; the permutation targets
+        // (sum 6, product 6) survive it.
+        let puzzle = Puzzle::new(3)
+            .unwrap()
+            .insert_cage(&cage(3, &[(0, 0), (0, 1), (0, 2)], Operator::Add, 6))
+            .unwrap()
+            .unwrap()
+            .insert_cage(&cage(3, &[(1, 0), (1, 1), (1, 2)], Operator::Add, 6))
+            .unwrap()
+            .unwrap();
+        let pairs = feasible_op_targets(&puzzle, &poly(&[(2, 0), (2, 1), (2, 2)])).unwrap();
+        assert!(pairs.contains(&(Operator::Add, 6)));
+        assert!(pairs.contains(&(Operator::Multiply, 6)));
     }
 
     #[test]
