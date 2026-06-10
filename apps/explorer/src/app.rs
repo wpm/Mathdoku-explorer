@@ -94,11 +94,25 @@ mod tests {
     }
 
     #[test]
-    fn list_reports_an_empty_registry() {
+    fn list_includes_the_registered_solve_time_experiment() {
         let cli = parse(&["mathdoku-explorer", "list"]);
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
         run(cli, &mut stdout, &mut stderr).expect("list should succeed");
+        let stdout = String::from_utf8(stdout).expect("output should be UTF-8");
+        assert!(
+            stdout.lines().any(|line| line.starts_with("solve-time ")),
+            "list should include solve-time, got:\n{stdout}"
+        );
+        assert!(stderr.is_empty());
+    }
+
+    #[test]
+    fn list_reports_an_empty_registry() {
+        let cli = parse(&["mathdoku-explorer", "list"]);
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        run_with_registry(cli, &[], &mut stdout, &mut stderr).expect("list should succeed");
         assert_eq!(
             String::from_utf8(stdout).expect("output should be UTF-8"),
             "no experiments registered\n"

@@ -2526,6 +2526,7 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "csv",
+ "mathdoku",
  "rand 0.10.1",
  "rand_chacha 0.10.0",
  "serde",
