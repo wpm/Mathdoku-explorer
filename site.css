@@ -1,0 +1,163 @@
+/*
+ * Landing-page styles. All color and type come from the shared tokens in
+ * theme.css — no hard-coded hex values here, so the site cannot drift from
+ * the app's paper theme.
+ */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: 1rem;
+  line-height: 1.6;
+  color: var(--paper-ink);
+  background-color: var(--paper-bg);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2 {
+  font-family: var(--font-serif);
+  color: var(--paper-ink);
+  line-height: 1.2;
+}
+
+a {
+  color: var(--paper-accent);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+/* Centered single column; the header and footer span it too. */
+.site-header,
+main,
+.site-footer {
+  max-width: 56rem;
+  margin: 0 auto;
+  padding: 0 1.5rem;
+}
+
+.site-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding-top: 1.25rem;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid var(--paper-line);
+}
+
+.brand {
+  font-family: var(--font-serif);
+  font-size: 1.35rem;
+  font-weight: 700;
+}
+
+.hero {
+  text-align: center;
+  padding-top: 3rem;
+}
+
+.hero h1 {
+  font-size: clamp(2rem, 5vw, 3rem);
+  font-weight: 600;
+  margin: 0 auto 1rem;
+  max-width: 44rem;
+}
+
+.lede {
+  font-size: 1.15rem;
+  color: var(--paper-ink-2);
+  max-width: 40rem;
+  margin: 0 auto 2rem;
+}
+
+.cta {
+  margin: 0 0 0.75rem;
+}
+
+.cta-button {
+  display: inline-block;
+  background-color: var(--paper-accent);
+  color: var(--paper-bg);
+  font-weight: 600;
+  font-size: 1.1rem;
+  padding: 0.75rem 1.75rem;
+  border-radius: 6px;
+}
+
+.cta-button:hover {
+  text-decoration: none;
+  filter: brightness(1.15);
+}
+
+.cta-note {
+  color: var(--paper-ink-3);
+  font-size: 0.95rem;
+  margin: 0;
+}
+
+.screenshot {
+  margin: 3rem auto;
+  text-align: center;
+}
+
+.screenshot img {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--paper-line);
+  border-radius: 8px;
+}
+
+.features {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  gap: 2rem;
+  padding: 1rem 0 2rem;
+}
+
+.feature h2 {
+  font-size: 1.3rem;
+  margin: 0 0 0.5rem;
+}
+
+.feature p {
+  margin: 0;
+  color: var(--paper-ink-2);
+}
+
+.explainer {
+  border-top: 1px solid var(--paper-line);
+  padding: 2rem 0 1rem;
+}
+
+.explainer h2 {
+  font-size: 1.5rem;
+  margin: 0 0 0.5rem;
+}
+
+.explainer p {
+  color: var(--paper-ink-2);
+  max-width: 44rem;
+  margin: 0;
+}
+
+.site-footer {
+  border-top: 1px solid var(--paper-line);
+  margin-top: 3rem;
+  padding-top: 1rem;
+  padding-bottom: 2rem;
+  color: var(--paper-ink-3);
+  font-size: 0.9rem;
+}
