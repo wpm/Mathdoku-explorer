@@ -25,6 +25,11 @@ pub enum Command {
     Perf {
         /// Path to the YAML experiment configuration file.
         config: PathBuf,
+
+        /// Run even in a debug build, whose timings are normally refused
+        /// because they say nothing about the optimised library.
+        #[arg(long)]
+        allow_debug: bool,
     },
     /// List the available experiments.
     List,
@@ -43,7 +48,28 @@ mod tests {
         let cli = Cli::try_parse_from(["mathdoku-explorer", "perf", "experiment.yaml"])
             .expect("perf with a config path should parse");
         match cli.command {
-            Command::Perf { config } => assert_eq!(config, PathBuf::from("experiment.yaml")),
+            Command::Perf {
+                config,
+                allow_debug,
+            } => {
+                assert_eq!(config, PathBuf::from("experiment.yaml"));
+                assert!(!allow_debug, "--allow-debug should default to off");
+            }
+            Command::List => panic!("expected the perf subcommand"),
+        }
+    }
+
+    #[test]
+    fn perf_parses_allow_debug_flag() {
+        let cli = Cli::try_parse_from([
+            "mathdoku-explorer",
+            "perf",
+            "experiment.yaml",
+            "--allow-debug",
+        ])
+        .expect("perf with --allow-debug should parse");
+        match cli.command {
+            Command::Perf { allow_debug, .. } => assert!(allow_debug),
             Command::List => panic!("expected the perf subcommand"),
         }
     }

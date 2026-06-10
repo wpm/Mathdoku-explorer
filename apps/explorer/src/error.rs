@@ -13,10 +13,77 @@ use thiserror::Error;
 /// Everything that can go wrong while running an Explorer command.
 #[derive(Debug, Error)]
 pub enum Error {
-    /// The command is specified (ADR-0007) but its implementation has not
-    /// landed yet.
-    #[error("not yet implemented: {0}")]
-    NotYetImplemented(&'static str),
+    /// The `perf` configuration names an experiment that is not in the
+    /// registry.
+    #[error(
+        "unknown experiment `{name}`; known experiments: {}",
+        known_names(known)
+    )]
+    UnknownExperiment {
+        /// The unrecognised experiment name from the configuration.
+        name: String,
+        /// Every registered experiment name, for the user to pick from.
+        known: Vec<String>,
+    },
+
+    /// The binary was compiled with `debug_assertions`: timings of an
+    /// unoptimised build say nothing about the optimised library, so the
+    /// runner refuses unless explicitly overridden.
+    #[error(
+        "refusing to measure a debug build: unoptimised timings are \
+         meaningless; rebuild with --release, or pass --allow-debug to \
+         measure anyway"
+    )]
+    DebugBuild,
+
+    /// An experiment returned measurements whose phases do not match the
+    /// phases it declared up front.
+    #[error(
+        "experiment `{experiment}` returned measurement phases [{actual}] \
+         but declared [{expected}]"
+    )]
+    PhaseMismatch {
+        /// The offending experiment.
+        experiment: String,
+        /// The declared phases, comma-separated.
+        expected: String,
+        /// The phases actually returned, comma-separated.
+        actual: String,
+    },
+
+    /// A set of measurements could not be summarised statistically.
+    #[error("cannot summarise measurements: {source}")]
+    Stats {
+        /// The underlying statistics error.
+        #[from]
+        source: crate::stats::Error,
+    },
+
+    /// A CSV output file could not be written.
+    #[error("cannot write CSV output: {source}")]
+    Csv {
+        /// The underlying CSV error.
+        #[from]
+        source: csv::Error,
+    },
+
+    /// The run output directory could not be created.
+    #[error("cannot create run output directory under `{path}`: {source}")]
+    OutputDir {
+        /// The parent directory under which creation failed.
+        path: PathBuf,
+        /// The underlying I/O error.
+        source: io::Error,
+    },
+
+    /// A run output file could not be written.
+    #[error("cannot write output file `{path}`: {source}")]
+    OutputWrite {
+        /// The file that could not be written.
+        path: PathBuf,
+        /// The underlying I/O error.
+        source: io::Error,
+    },
 
     /// An I/O failure, e.g. while writing to an output handle.
     #[error(transparent)]
@@ -61,4 +128,13 @@ pub enum Error {
         #[source]
         source: Box<Self>,
     },
+}
+
+/// Renders the registry's experiment names for [`Error::UnknownExperiment`].
+fn known_names(known: &[String]) -> String {
+    if known.is_empty() {
+        "(none registered)".to_owned()
+    } else {
+        known.join(", ")
+    }
 }
